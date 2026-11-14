@@ -1,1 +1,1 @@
-"""TG Space Bot package."""
+"""Application package."""

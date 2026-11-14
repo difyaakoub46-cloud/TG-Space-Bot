@@ -1,152 +1,110 @@
-"""Library browsing per category, file details, delivery and deletion."""
+"""Browse router: library, categories and file actions."""
 
 from __future__ import annotations
 
-import logging
-
 from aiogram import F, Router
-from aiogram.enums import ChatType
-from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
 
 from src.bot import views
 from src.bot.keyboards import (
-    BTN_LIBRARY,
-    BTN_STATS,
     CategoryCB,
     FileCB,
     MenuCB,
     back_to_menu_kb,
-    browse_list_kb,
     categories_kb,
+    category_files_kb,
     delete_confirm_kb,
     file_actions_kb,
-    main_menu_kb,
 )
-from src.db.repository import SupabaseError
 from src.services.container import Services
-from src.utils.filetypes import parse_category
 
-logger = logging.getLogger(__name__)
-
-router = Router(name="library")
+router = Router(name="browse")
 
 
-# ── entry points ────────────────────────────────
 @router.message(Command("library"))
-@router.message(F.text == BTN_LIBRARY)
-async def library_message(message: Message, services: Services) -> None:
+@router.message(F.text == "📚 المكتبة")
+async def library_message(message: Message, services: Services, state: FSMContext, bot) -> None:
     counts = await services.files.category_counts()
-    await message.answer(views.categories_text(counts), reply_markup=categories_kb(counts))
-
-
-@router.message(Command("stats"))
-@router.message(F.text == BTN_STATS)
-async def stats_message(message: Message, services: Services) -> None:
-    stats = await services.files.stats()
-    await message.answer(views.stats_text(stats), reply_markup=back_to_menu_kb())
+    await views.set_screen(bot, message, state, views.categories_text(counts), categories_kb(counts))
 
 
 @router.callback_query(MenuCB.filter(F.action == "categories"))
-async def categories_callback(callback: CallbackQuery, services: Services) -> None:
-    await callback.answer()
+async def categories_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
     counts = await services.files.category_counts()
-    await views.show(callback, views.categories_text(counts), categories_kb(counts))
+    await views.set_screen_cb(callback, state, views.categories_text(counts), categories_kb(counts))
 
 
-@router.callback_query(MenuCB.filter(F.action == "stats"))
-async def stats_callback(callback: CallbackQuery, services: Services) -> None:
-    await callback.answer()
-    stats = await services.files.stats()
-    await views.show(callback, views.stats_text(stats), back_to_menu_kb())
-
-
-# ── category pages ──────────────────────────────
 @router.callback_query(CategoryCB.filter())
-async def category_page(
-    callback: CallbackQuery, callback_data: CategoryCB, services: Services
-) -> None:
-    await callback.answer()
-    category = parse_category(callback_data.category)
-    page = await services.files.search(category=category, page=callback_data.page)
-    await views.show(
-        callback,
-        views.search_text(page, None, category.value),
-        browse_list_kb(page.items, category.value, page.page, page.pages),
+async def category_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
+    category = callback.data.split("category_", 1)[1]
+    files = await services.files.by_category(category)
+    await views.set_screen_cb(callback, state, views.category_text(category, files), category_files_kb(files, category))
+
+
+@router.callback_query(FileCB.filter())
+async def file_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
+    file_id = callback.data.split("file_", 1)[1]
+    record = await services.files.get(file_id)
+    if record is None:
+        await callback.answer("الملف غير موجود.", show_alert=True)
+        return
+    await views.set_screen_cb(callback, state, views.file_text(record), file_actions_kb(record.id))
+
+
+@router.callback_query(F.data.startswith("file_send_"))
+async def file_send_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
+    file_id = callback.data.split("file_send_", 1)[1]
+    record = await services.files.get(file_id)
+    if record is None:
+        await callback.answer("الملف غير موجود.", show_alert=True)
+        return
+    await callback.message.answer_document(
+        document=record.file_id,
+        caption=views.file_caption(record),
+    )
+    await views.set_screen_cb(callback, state, views.file_sent_text(record), back_to_menu_kb())
+
+
+@router.callback_query(F.data.startswith("file_delete_"))
+async def file_delete_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
+    file_id = callback.data.split("file_delete_", 1)[1]
+    record = await services.files.get(file_id)
+    if record is None:
+        await callback.answer("الملف غير موجود.", show_alert=True)
+        return
+    await views.set_screen_cb(callback, state, views.deletion_text(record), delete_confirm_kb(file_id))
+
+
+@router.callback_query(F.data.startswith("file_delete_confirm_"))
+async def file_delete_confirm_callback(callback: CallbackQuery, services: Services, state: FSMContext, bot) -> None:
+    file_id = callback.data.split("file_delete_confirm_", 1)[1]
+    deleted = await services.files.delete(file_id)
+    if not deleted:
+        await callback.answer("فشل الحذف.", show_alert=True)
+        return
+    await views.set_screen_cb(callback, state, "✅ تم حذف الملف.", back_to_menu_kb())
+
+
+def category_text(category: str, files: list) -> str:
+    lines = [f"📁 <b>{category.capitalize()}</b>"]
+    for file in files:
+        lines.append(f"- {file.file_name}")
+    return "\n".join(lines)
+
+
+def file_text(record) -> str:
+    return (
+        f"📄 <b>{record.file_name}</b>\n\n"
+        f"الحجم: {record.size_bytes} بايت\n"
+        f"الفئة: {record.category}\n"
     )
 
 
-# ── single file ─────────────────────────────────
-@router.callback_query(FileCB.filter(F.action == "view"))
-async def view_file(
-    callback: CallbackQuery, callback_data: FileCB, services: Services
-) -> None:
-    await callback.answer()
-    record = await services.files.get(callback_data.file_id)
-    if record is None:
-        await views.show(callback, "⚠️ هذا الملف لم يعد موجوداً في المكتبة.", main_menu_kb())
-        return
-    await views.show(callback, views.file_card(record), file_actions_kb(record.id))
+def file_caption(record) -> str:
+    return f"{record.file_name}\n\n{rc_token}"
 
 
-@router.callback_query(FileCB.filter(F.action == "send"))
-async def send_file(
-    callback: CallbackQuery, callback_data: FileCB, services: Services
-) -> None:
-    record = await services.files.get(callback_data.file_id)
-    if record is None:
-        await callback.answer("⚠️ الملف غير موجود في المكتبة.", show_alert=True)
-        return
-
-    target_chat = callback.message.chat.id if callback.message else callback.from_user.id
-    try:
-        await services.files.send_to_user(record, target_chat)
-    except TelegramAPIError as exc:
-        logger.warning("Delivery of %s failed: %s", record.id, exc)
-        await callback.answer(
-            "⚠️ تعذّر إرسال الملف: النسخة الأصلية لم تعد متاحة في مجموعة التخزين.",
-            show_alert=True,
-        )
-        return
-
-    await callback.answer("✅ تم إرسال الملف.")
-
-
-@router.callback_query(FileCB.filter(F.action == "delete"))
-async def ask_delete(
-    callback: CallbackQuery, callback_data: FileCB, services: Services
-) -> None:
-    await callback.answer()
-    record = await services.files.get(callback_data.file_id)
-    if record is None:
-        await views.show(callback, "⚠️ هذا الملف لم يعد موجوداً في المكتبة.", main_menu_kb())
-        return
-    await views.show(callback, views.delete_prompt_text(record), delete_confirm_kb(record.id))
-
-
-@router.callback_query(FileCB.filter(F.action == "confirm_delete"))
-async def confirm_delete(
-    callback: CallbackQuery, callback_data: FileCB, services: Services
-) -> None:
-    await callback.answer("جارٍ الحذف…")
-    try:
-        record = await services.files.delete(callback_data.file_id)
-    except LookupError:
-        await views.show(callback, "⚠️ الملف غير موجود مسبقاً.", main_menu_kb())
-        return
-    except SupabaseError:
-        logger.exception("Deleting %s failed", callback_data.file_id)
-        await views.show(
-            callback,
-            "❌ فشل حذف السجل من قاعدة البيانات. حاول مرة أخرى بعد قليل.",
-            main_menu_kb(),
-        )
-        return
-
-    await views.show(callback, views.deletion_text(record), main_menu_kb())
-
-
-# Private chats only: the library UI is not meant to run inside groups.
-router.message.filter(F.chat.type == ChatType.PRIVATE)
-router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+def file_sent_text(record) -> str:
+    return f"✅ تم إرسال {record.file_name}"

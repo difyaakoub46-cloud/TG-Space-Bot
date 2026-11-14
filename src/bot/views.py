@@ -1,146 +1,137 @@
-"""Text rendering for every bot screen."""
+"""View helpers: single persistent screen and text builders."""
 
 from __future__ import annotations
 
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from src.core.config import Settings
 from src.db.models import StoredFile
-from src.services.files import FilePage, LibraryStats
-from src.utils.filetypes import CATEGORY_LABELS, FileCategory, parse_category
-from src.utils.formatters import escape, human_size, truncate
-from src.utils.telegram import safe_edit_text
-
-DIVIDER = "━━━━━━━━━━━━━━━"
 
 
-def welcome_text(settings: Settings) -> str:
-    scope = ""
-    if settings.allowed_users:
-        scope = f"\n🔐 البوت مخصص لـ {len(settings.allowed_users)} مستخدم/مستخدمين.\n"
+async def delete_screen_message(bot: Bot, chat_id: int, message_id: int) -> None:
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except TelegramAPIError:
+        pass
+
+
+async def set_screen(
+    bot: Bot,
+    message: Message,
+    state: FSMContext,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    screen_id = (await state.get_data()).get("screen_message_id")
+    try:
+        if screen_id:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=screen_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+            await state.update_data(screen_message_id=screen_id)
+            return
+    except TelegramAPIError:
+        await delete_screen_message(bot, message.chat.id, screen_id or 0)
+
+    sent = await message.answer(text, reply_markup=reply_markup)
+    await state.update_data(screen_message_id=sent.message_id)
+
+
+async def set_screen_cb(
+    callback: CallbackQuery,
+    state: FSMContext,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    screen_id = (await state.get_data()).get("screen_message_id")
+    try:
+        if screen_id:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=reply_markup,
+            )
+            await state.update_data(screen_message_id=screen_id)
+            await callback.answer()
+            return
+    except TelegramAPIError:
+        await delete_screen_message(callback.bot, callback.message.chat.id, screen_id or 0)
+
+    sent = await callback.message.answer(text, reply_markup=reply_markup)
+    await state.update_data(screen_message_id=sent.message_id)
+    await callback.answer()
+
+
+def welcome_text(settings: Settings | None = None) -> str:
     return (
-        "<b>🗄 TG Space Bot</b>\n"
-        f"{DIVIDER}\n"
-        "مساحتك السحابية داخل تيليغرام.\n"
-        f"{scope}\n"
-        "📤 <b>أرسل أي ملف</b> في هذه المحادثة وسيُرفع تلقائياً إلى مجموعة "
-        "التخزين المناسبة حسب نوعه، مع حفظ بياناته في Supabase.\n\n"
-        "🔍 ابحث عن أي ملف بالاسم أو تصفّح الفئات، ثم اضغط عليه لإرساله فوراً.\n"
-        "🗑 يمكنك حذف أي ملف من المكتبة نهائياً في أي وقت.\n\n"
-        "<i>الحد الأقصى لحجم الملف الواحد يتبع حدود تيليغرام: ٢ غيغابايت "
-        "للبوت العادي و٤ غيغابايت لحساب بريميوم.</i>"
+        "👋 مرحباً بك في TG-Space-Bot\n\n"
+        "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة.\n"
+        "يمكنك تصفح المكتبة، البحث عن ملفات، ورؤية الإحصائيات.\n\n"
+        "استخدم الأزرار أدناه للبدء."
     )
 
 
-def help_text(settings: Settings) -> str:
-    lines = [
-        "<b>❓ دليل الاستخدام</b>",
-        DIVIDER,
-        "<b>الأوامر</b>",
-        "/start — القائمة الرئيسية",
-        "/search — البحث بالاسم",
-        "/library — تصفح المكتبة حسب الفئة",
-        "/stats — إحصائيات التخزين",
-        "/help — هذه المساعدة",
-        "/cancel — إلغاء العملية الحالية",
-        "",
-        "<b>الرفع</b>",
-        "أرسل الملف كمستند (Document) للحفاظ على اسمه الأصلي — الصور والفيديو "
-        "والصوتيات تُقبل أيضاً.",
-        "",
-        "<b>التوجيه التلقائي</b>",
-    ]
-    for category in FileCategory:
-        lines.append(f"• {CATEGORY_LABELS[category]} ← مجموعة/قناة مخصصة")
-    lines += [
-        "",
-        "<b>البحث</b>",
-        "اكتب حرفين على الأقل من اسم الملف، أو صفِّ النتائج حسب الفئة من الأزرار.",
-        "",
-        f"<b>الفئات المتاحة:</b> {len(FileCategory)}",
-    ]
-    if settings.allowed_users:
-        lines += ["", f"🔐 البوت مخصص لـ {len(settings.allowed_users)} مستخدم/مستخدمين."]
-    return "\n".join(lines)
-
-
-def file_card(record: StoredFile) -> str:
+def help_text() -> str:
     return (
-        f"<b>📄 {escape(truncate(record.file_name, 70))}</b>\n"
-        f"{DIVIDER}\n"
-        f"الفئة: {CATEGORY_LABELS[record.category]}\n"
-        f"الحجم: {record.size_human}\n"
-        f"تاريخ الرفع: {record.created_human}\n"
-        f"نوع MIME: <code>{escape(record.mime_type or 'غير معروف')}</code>\n"
-        f"المعرّف: <code>{record.id}</code>"
+        "📖 <b>مساعدة</b>\n\n"
+        "- أرسِل أي ملف وسيتم حفظه تلقائياً في مجموعة التخزين المناسبة.\n"
+        "- استخدم /library لتصفح المكتبة.\n"
+        "- استخدم /search للبحث عن ملفات محفوظة.\n"
+        "- استخدم /stats لرؤية إحصائيات المكتبة.\n\n"
+        "كل التنقل يتم عبر الأزرارinline لتقليل الرسائل."
+    )
+
+
+def stats_text(stats: dict[str, int]) -> str:
+    total = stats.get("total", 0)
+    return (
+        f"📊 <b>إحصائيات المكتبة</b>\n\n"
+        f"إجمالي الملفات: {total}\n"
     )
 
 
 def categories_text(counts: dict[str, int]) -> str:
-    total = sum(counts.values())
-    lines = [f"<b>📂 المكتبة · {total} ملف</b>", DIVIDER]
-    for category in FileCategory:
-        lines.append(f"{CATEGORY_LABELS[category]}: <b>{counts.get(category.value, 0)}</b>")
-    lines += ["", "اختر فئة لعرض ملفاتها."]
+    lines = ["📚 <b>المكتبة</b>"]
+    for category, count in counts.items():
+        lines.append(f"- {category.capitalize()}: {count}")
     return "\n".join(lines)
 
 
-def search_text(page: FilePage, query: str | None, category: str | None) -> str:
-    header = f"🔍 <b>نتائج البحث عن:</b> <i>{escape(query)}</i>" if query else "📂 <b>المكتبة</b>"
-    if category:
-        header += f"\nالفئة: {CATEGORY_LABELS[parse_category(category)]}"
-    lines = [header, DIVIDER, f"النتائج: <b>{page.total}</b> · الصفحة {page.page}/{page.pages}"]
-    if not page.items:
-        lines += ["", "لا توجد ملفات مطابقة. جرّب كلمات أقل أو فئة أخرى."]
-    else:
-        lines += ["", "اضغط على الملف لعرض تفاصيله وإرساله."]
-    return "\n".join(lines)
-
-
-def stats_text(stats: LibraryStats) -> str:
-    total_size = human_size(stats.total_bytes) if stats.total_bytes is not None else "غير متاح"
-    lines = [
-        "<b>📊 إحصائيات التخزين</b>",
-        DIVIDER,
-        f"إجمالي الملفات: <b>{stats.total}</b>",
-        f"إجمالي الحجم: <b>{total_size}</b>",
-        "",
-    ]
-    for category in FileCategory:
-        count = stats.counts.get(category.value, 0)
-        share = (count / stats.total * 100) if stats.total else 0
-        lines.append(f"{CATEGORY_LABELS[category]}: <b>{count}</b> ({share:.0f}%)")
-    return "\n".join(lines)
-
-
-def saved_text(record: StoredFile) -> str:
-    return f"✅ <b>تم حفظ الملف بنجاح</b>\n{DIVIDER}\n{file_card(record)}"
-
-
-def delete_prompt_text(record: StoredFile) -> str:
+def search_prompt_text() -> str:
     return (
-        "⚠️ <b>تأكيد الحذف</b>\n"
-        f"{DIVIDER}\n"
-        "سيُحذف هذا الملف نهائياً من Supabase ومن مجموعة التخزين:\n"
-        f"<b>{escape(truncate(record.file_name, 60))}</b>"
+        "🔍 <b>أدخل اسم الملف</b>\n\n"
+        "اكتب اسم الملف أو جزء منه للبحث.\n"
+        "يمكنك إلغاء العملية بأي وقت."
     )
 
 
 def deletion_text(record: StoredFile) -> str:
     return (
-        f"🗑 <b>تم حذف الملف نهائياً</b>\n"
-        f"{DIVIDER}\n"
-        f"{escape(truncate(record.file_name, 70))}\n"
-        "أُزيل السجل من Supabase والنسخة من مجموعة التخزين."
+        f"🗑 <b>حذف الملف</b>\n\n"
+        f"اسم الملف: {record.file_name}\n"
+        f"الحجم: {record.size_bytes} بايت\n\n"
+        "هل أنت متأكد من الحذف؟"
     )
 
 
 async def show(
-    callback: CallbackQuery,
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
     text: str,
-    keyboard: InlineKeyboardMarkup | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    """Edit the current screen, falling back to a new message when needed."""
-    if callback.message is None:
-        return
-    await safe_edit_text(callback.message, text, keyboard)
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    except TelegramAPIError:
+        pass

@@ -1,1 +1,1 @@
-"""Telegram bot layer: dispatcher, routers, keyboards and views."""
+"""Telegram bot layer."""

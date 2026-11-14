@@ -1,18 +1,14 @@
-"""Logging bootstrap for the bot process."""
+"""Logging setup for the bot."""
 
 from __future__ import annotations
 
 import logging
 import sys
 
+from src.core.config import Settings
 
-def configure_logging(level: str = "INFO") -> None:
-    """Configure a single, readable stdout handler for the whole process."""
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+def setup_logging(settings: Settings) -> None:
+    level = logging.INFO
+    fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    logging.basicConfig(level=level, format=fmt, stream=sys.stdout)

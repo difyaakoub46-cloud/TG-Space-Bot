@@ -1,214 +1,193 @@
-"""All keyboards and callback-data factories."""
+"""Keyboard builders for the bot."""
 
 from __future__ import annotations
 
-from aiogram.filters.callback_data import CallbackData
+from aiogram import F, Router
+from aiogram.enums import ChatType
+from aiogram.filters import Command
 from aiogram.types import (
+    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
+    Message,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from src.bot import views
 from src.db.models import StoredFile
-from src.utils.filetypes import CATEGORY_LABELS, FileCategory
-from src.utils.formatters import clip_button, human_size
 
-BTN_SEARCH = "🔍 بحث"
-BTN_LIBRARY = "📂 مكتبتي"
-BTN_STATS = "📊 الإحصائيات"
-BTN_HELP = "❓ مساعدة"
+router = Router(name="keyboards")
+
+
+@router.callback_query(F.data == "main_menu")
+async def main_menu_callback(callback: CallbackQuery) -> None:
+    await callback.message.edit_text(
+        views.welcome_text(),
+        reply_markup=main_menu_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel")
+async def cancel_callback(callback: CallbackQuery) -> None:
+    await callback.message.edit_text(
+        "✅ تم الإلغاء.",
+        reply_markup=main_menu_kb(),
+    )
+    await callback.answer()
+
+
 BTN_CANCEL = "❌ إلغاء"
+BTN_LIBRARY = "📚 المكتبة"
+BTN_SEARCH = "🔍 بحث"
+BTN_STATS = "📊 إحصائيات"
+BTN_HELP = "❓ مساعدة"
 
 
-class MenuCB(CallbackData, prefix="menu"):
-    action: str
-
-
-class CategoryCB(CallbackData, prefix="cat"):
-    category: str
-    page: int = 1
-
-
-class FileCB(CallbackData, prefix="file"):
-    action: str
-    file_id: str
-
-
-class SearchPageCB(CallbackData, prefix="spage"):
-    page: int
-
-
-class SearchFilterCB(CallbackData, prefix="sflt"):
-    category: str
-
-
-# ── reply keyboards ─────────────────────────────
-def main_reply_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_SEARCH), KeyboardButton(text=BTN_LIBRARY)],
-            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_HELP)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="أرسل ملفاً لحفظه، أو ابحث بالاسم…",
-    )
-
-
-def cancel_reply_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
-        resize_keyboard=True,
-        input_field_placeholder="اكتب اسم الملف…",
-    )
-
-
-# ── inline keyboards ────────────────────────────
 def main_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔍 بحث في الملفات", callback_data=MenuCB(action="search"))
-    builder.button(text="📂 تصفح الفئات", callback_data=MenuCB(action="categories"))
-    builder.button(text="📊 الإحصائيات", callback_data=MenuCB(action="stats"))
-    builder.button(text="❓ مساعدة", callback_data=MenuCB(action="help"))
-    builder.adjust(1, 2, 1)
+    builder.row(
+        InlineKeyboardButton(text=BTN_LIBRARY, callback_data="menu_categories"),
+        InlineKeyboardButton(text=BTN_SEARCH, callback_data="menu_search"),
+        InlineKeyboardButton(text=BTN_STATS, callback_data="menu_stats"),
+        InlineKeyboardButton(text=BTN_HELP, callback_data="menu_help"),
+    )
+    builder.row(InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_back"))
     return builder.as_markup()
+
+
+def main_reply_kb() -> ReplyKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=BTN_LIBRARY, callback_data="menu_categories"),
+        InlineKeyboardButton(text=BTN_SEARCH, callback_data="menu_search"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=BTN_STATS, callback_data="menu_stats"),
+        InlineKeyboardButton(text=BTN_HELP, callback_data="menu_help"),
+    )
+    builder.row(InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_back"))
+    return builder.as_markup()
+
+
+def back_to_menu_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"))
+    return builder.as_markup()
+
+
+MenuCB = CallbackQuery
 
 
 def categories_kb(counts: dict[str, int]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for category in FileCategory:
+    for category, count in counts.items():
         builder.button(
-            text=f"{CATEGORY_LABELS[category]} · {counts.get(category.value, 0)}",
-            callback_data=CategoryCB(category=category.value, page=1),
+            text=f"{category.capitalize()} ({count})",
+            callback_data=f"category_{category}",
         )
-    builder.button(text="⬅️ القائمة الرئيسية", callback_data=MenuCB(action="menu"))
-    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"))
     return builder.as_markup()
 
 
-def _file_button(record: StoredFile) -> InlineKeyboardButton:
-    label = f"{clip_button(record.file_name, 38)} · {human_size(record.size_bytes)}"
-    return InlineKeyboardButton(
-        text=label,
-        callback_data=FileCB(action="view", file_id=record.id).pack(),
-    )
-
-
-def browse_list_kb(
-    items: list[StoredFile], category: str, page: int, pages: int
-) -> InlineKeyboardMarkup:
+def category_files_kb(files: list[StoredFile], category: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for record in items:
-        builder.row(_file_button(record))
-
-    navigation: list[InlineKeyboardButton] = []
-    if page > 1:
-        navigation.append(
-            InlineKeyboardButton(
-                text="⬅️ السابق",
-                callback_data=CategoryCB(category=category, page=page - 1).pack(),
-            )
+    for file in files:
+        builder.button(
+            text=file.file_name,
+            callback_data=f"file_{file.id}",
         )
-    if page < pages:
-        navigation.append(
-            InlineKeyboardButton(
-                text="التالي ➡️",
-                callback_data=CategoryCB(category=category, page=page + 1).pack(),
-            )
-        )
-    if navigation:
-        builder.row(*navigation)
-
     builder.row(
-        InlineKeyboardButton(
-            text="📂 الفئات", callback_data=MenuCB(action="categories").pack()
-        ),
-        InlineKeyboardButton(
-            text="🏠 الرئيسية", callback_data=MenuCB(action="menu").pack()
-        ),
+        InlineKeyboardButton(text="🔙 رجوع للفئات", callback_data="menu_categories"),
+        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
     )
     return builder.as_markup()
 
 
-def search_list_kb(
-    items: list[StoredFile], page: int, pages: int, active_category: str | None
-) -> InlineKeyboardMarkup:
+FileCB = CallbackQuery
+CategoryCB = CallbackQuery
+SearchPageCB = CallbackQuery
+SearchFilterCB = CallbackQuery
+
+
+def search_list_kb(results: list[StoredFile], page: int, total_pages: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for record in items:
-        builder.row(_file_button(record))
-
-    filters: list[InlineKeyboardButton] = [
-        InlineKeyboardButton(
-            text="✅ الكل" if active_category is None else "الكل",
-            callback_data=SearchFilterCB(category="all").pack(),
+    for file in results:
+        builder.button(
+            text=file.file_name,
+            callback_data=f"file_{file.id}",
         )
-    ]
-    for category in FileCategory:
-        is_active = active_category == category.value
-        filters.append(
-            InlineKeyboardButton(
-                text=f"{'✅ ' if is_active else ''}{CATEGORY_LABELS[category].split()[0]}",
-                callback_data=SearchFilterCB(category=category.value).pack(),
-            )
-        )
-    builder.row(*filters)
-
-    navigation: list[InlineKeyboardButton] = []
-    if page > 1:
-        navigation.append(
-            InlineKeyboardButton(
-                text="⬅️ السابق", callback_data=SearchPageCB(page=page - 1).pack()
-            )
-        )
-    if page < pages:
-        navigation.append(
-            InlineKeyboardButton(
-                text="التالي ➡️", callback_data=SearchPageCB(page=page + 1).pack()
-            )
-        )
-    if navigation:
-        builder.row(*navigation)
-
     builder.row(
-        InlineKeyboardButton(
-            text="🔍 بحث جديد", callback_data=MenuCB(action="search").pack()
-        ),
-        InlineKeyboardButton(
-            text="🏠 الرئيسية", callback_data=MenuCB(action="menu").pack()
-        ),
+        InlineKeyboardButton(text="◀ السابق", callback_data=f"search_page_{page-1}"),
+        InlineKeyboardButton(text="التالي ▶", callback_data=f"search_page_{page+1}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
+        InlineKeyboardButton(text="🔍 بحث جديد", callback_data="menu_search"),
     )
     return builder.as_markup()
 
 
 def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="⬇️ إرسال الملف", callback_data=FileCB(action="send", file_id=file_id)
+    builder.row(
+        InlineKeyboardButton(text="📤 إرسال", callback_data=f"file_send_{file_id}"),
+        InlineKeyboardButton(text="🗑 حذف", callback_data=f"file_delete_{file_id}"),
     )
-    builder.button(
-        text="🗑 حذف الملف", callback_data=FileCB(action="delete", file_id=file_id)
+    builder.row(
+        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
     )
-    builder.button(text="🏠 الرئيسية", callback_data=MenuCB(action="menu"))
-    builder.adjust(2, 1)
     return builder.as_markup()
 
 
 def delete_confirm_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="✅ نعم، احذف نهائياً",
-        callback_data=FileCB(action="confirm_delete", file_id=file_id),
+    builder.row(
+        InlineKeyboardButton(text="✅ نعم، احذف", callback_data=f"file_delete_confirm_{file_id}"),
+        InlineKeyboardButton(text="❌ إلغاء", callback_data="menu_main"),
     )
-    builder.button(
-        text="↩️ تراجع", callback_data=FileCB(action="view", file_id=file_id)
-    )
-    builder.adjust(1)
     return builder.as_markup()
 
 
-def back_to_menu_kb() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🏠 القائمة الرئيسية", callback_data=MenuCB(action="menu"))
-    return builder.as_markup()
+def cancel_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[ReplyKeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+@router.message(Command("cancel"))
+async def cancel_command(message: Message) -> None:
+    await message.answer("✅ تم الإلغاء.", reply_markup=main_menu_kb())
+
+
+@router.message(Command("start"))
+async def start_command(message: Message) -> None:
+    await message.answer(views.welcome_text(), reply_markup=main_menu_kb())
+
+
+@router.message(Command("help"))
+@router.message(F.text == BTN_HELP)
+async def help_command(message: Message) -> None:
+    await message.answer(views.help_text(), reply_markup=main_menu_kb())
+
+
+@router.message(Command("library"))
+@router.message(F.text == BTN_LIBRARY)
+async def library_command(message: Message) -> None:
+    await message.answer("📚 المكتبة قيد التطوير.", reply_markup=main_menu_kb())
+
+
+@router.message(Command("search"))
+@router.message(F.text == BTN_SEARCH)
+async def search_command(message: Message) -> None:
+    await message.answer("🔍 اكتب اسم الملف للبحث.", reply_markup=cancel_reply_kb())
+
+
+@router.message(Command("stats"))
+@router.message(F.text == BTN_STATS)
+async def stats_command(message: Message) -> None:
+    await message.answer("📊 إحصائيات المكتبة قيد التطوير.", reply_markup=main_menu_kb())

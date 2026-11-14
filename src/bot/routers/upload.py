@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from src.bot import views
-from src.bot.keyboards import file_actions_kb, main_reply_kb
+from src.bot.keyboards import file_actions_kb, main_menu_kb
 from src.services.container import Services
 from src.utils.filetypes import extract_candidate
 from src.utils.telegram import safe_edit_text
@@ -38,12 +38,27 @@ async def handle_upload(message: Message, services: Services, state: FSMContext)
     except Exception:  # noqa: BLE001 - report every failure to the user
         logger.exception("Failed to store %s", candidate.file_name)
         await safe_edit_text(
-            status,
-            "❌ <b>تعذّر حفظ الملف</b>\n"
-            "تأكد من أن البوت مشرف في مجموعة التخزين المخصصة لهذا النوع، "
-            "ومن صحة إعدادات Supabase، ثم أعد المحاولة.",
+            services.storage._bot,
+            status.chat.id,
+            status.message_id,
+            "❌ فشل حفظ الملف.",
         )
-        await message.answer("أرسل الملف مرة أخرى بعد إصلاح المشكلة.", reply_markup=main_reply_kb())
         return
 
-    await safe_edit_text(status, views.saved_text(record), file_actions_kb(record.id))
+    await safe_edit_text(
+        services.storage._bot,
+        status.chat.id,
+        status.message_id,
+        views.file_saved_text(record),
+        reply_markup=file_actions_kb(record.id),
+    )
+
+
+async def start_search(message: Message, state: FSMContext, bot) -> None:
+    await state.set_state(None)
+    await views.set_screen(bot, message, state, views.search_prompt_text(), search_prompt_kb())
+
+
+async def cancel_search(state: FSMContext, bot, message: Message) -> None:
+    await state.clear()
+    await views.set_screen(bot, message, state, "✅ تم الإلغاء.", main_menu_kb())

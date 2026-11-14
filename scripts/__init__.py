@@ -1,1 +1,1 @@
-"""Operational scripts (database migrations, maintenance)."""
+"""Database migration scripts."""

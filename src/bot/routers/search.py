@@ -1,134 +1,111 @@
-"""Quick search by file name, with category filters and pagination."""
+"""Search router: query, results listing and filters."""
 
 from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
 
 from src.bot import views
 from src.bot.keyboards import (
     BTN_CANCEL,
     BTN_SEARCH,
     MenuCB,
+    SearchCancelCB,
     SearchFilterCB,
     SearchPageCB,
+    back_to_menu_kb,
     cancel_reply_kb,
     main_menu_kb,
-    main_reply_kb,
     search_list_kb,
+    search_prompt_kb,
 )
 from src.bot.states import SearchStates
 from src.services.container import Services
-from src.utils.filetypes import parse_category
 
 router = Router(name="search")
 
 MIN_QUERY_LENGTH = 2
 
 
-async def _prompt_for_query(message: Message, state: FSMContext) -> None:
+async def _prompt_for_query(message: Message, state: FSMContext, bot) -> None:
     await state.set_state(SearchStates.waiting_query)
-    await state.update_data(query=None, category=None, page=1)
-    await message.answer(
-        "🔍 أرسل اسم الملف الذي تبحث عنه.\n"
-        f"اكتب {MIN_QUERY_LENGTH} أحرف على الأقل، ويمكنك الإلغاء بالزر أدناه.",
-        reply_markup=cancel_reply_kb(),
-    )
+    await views.set_screen(bot, message, state, views.search_prompt_text(), search_prompt_kb())
 
 
 @router.message(Command("search"))
 @router.message(F.text == BTN_SEARCH)
-async def search_command(message: Message, state: FSMContext) -> None:
-    await _prompt_for_query(message, state)
+async def search_command(message: Message, state: FSMContext, bot) -> None:
+    await _prompt_for_query(message, state, bot)
 
 
-@router.callback_query(MenuCB.filter(F.action == "search"))
-async def search_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    if callback.message is not None:
-        await _prompt_for_query(callback.message, state)
-
-
-@router.message(SearchStates.waiting_query, F.text == BTN_CANCEL)
-async def cancel_search(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer("تم إلغاء البحث.", reply_markup=main_reply_kb())
-
-
-@router.message(SearchStates.waiting_query, F.text)
-async def run_search(message: Message, state: FSMContext, services: Services) -> None:
+@router.message(SearchStates.waiting_query)
+async def search_query_message(message: Message, state: FSMContext, services: Services, bot) -> None:
     query = (message.text or "").strip()
-    if len(query) < MIN_QUERY_LENGTH:
-        await message.answer(f"⚠️ اكتب {MIN_QUERY_LENGTH} أحرف على الأقل للبحث.")
-        return
-
-    await state.update_data(query=query, category=None, page=1)
-    # Leave the state but keep the search context for pagination/filtering.
-    await state.set_state(None)
-
-    page = await services.files.search(query=query, page=1)
-    await message.answer(
-        views.search_text(page, query, None),
-        reply_markup=search_list_kb(page.items, page.page, page.pages, None),
-        disable_web_page_preview=True,
-    )
-
-
-async def _rerun(
-    callback: CallbackQuery,
-    state: FSMContext,
-    services: Services,
-    *,
-    page_number: int,
-    category_value: str | None,
-) -> None:
-    data = await state.get_data()
-    query = data.get("query")
     if not query:
-        await views.show(
-            callback,
-            "⚠️ انتهت صلاحية نتائج البحث. ابدأ بحثاً جديداً عبر /search.",
-            main_menu_kb(),
-        )
+        await message.answer("⚠️ أدخل اسم الملف للبحث.")
         return
 
-    category = parse_category(category_value) if category_value else None
-    result = await services.files.search(query=query, category=category, page=page_number)
-    await state.update_data(category=category_value, page=result.page)
-    await views.show(
-        callback,
-        views.search_text(result, query, category_value),
-        search_list_kb(result.items, result.page, result.pages, category_value),
+    results = await services.files.search(query)
+    total_pages = (len(results) + 9) // 10
+    page = 1
+    page_items = results[:10]
+    await views.set_screen(
+        bot,
+        message,
+        state,
+        views.search_results_text(page_items, query, page, total_pages),
+        search_list_kb(page_items, page, total_pages),
     )
 
 
 @router.callback_query(SearchPageCB.filter())
-async def change_page(
-    callback: CallbackQuery,
-    callback_data: SearchPageCB,
-    state: FSMContext,
-    services: Services,
-) -> None:
-    await callback.answer()
-    data = await state.get_data()
-    await _rerun(
+async def search_page_callback(callback: CallbackQuery, state: FSMContext, services: Services, bot) -> None:
+    page = int(callback.data.split("search_page_", 1)[1])
+    query = (await state.get_data()).get("query", "")
+    results = await services.files.search(query)
+    total_pages = (len(results) + 9) // 10
+    page = max(1, min(page, total_pages))
+    page_items = results[(page-1)*10:page*10]
+    await views.set_screen_cb(
         callback,
         state,
-        services,
-        page_number=callback_data.page,
-        category_value=data.get("category"),
+        views.search_results_text(page_items, query, page, total_pages),
+        search_list_kb(page_items, page, total_pages),
     )
 
 
 @router.callback_query(SearchFilterCB.filter())
-async def filter_category(
-    callback: CallbackQuery,
-    callback_data: SearchFilterCB,
-    state: FSMContext,
-    services: Services,
-) -> None:
-    await callback.answer()
-    category_value = None if callback_data.category == "all" else callback_data.category
-    await _rerun(callback, state, services, page_number=1, category_value=category_value)
+async def search_filter_callback(callback: CallbackQuery, state: FSMContext, services: Services, bot) -> None:
+    category = callback.data.split("search_filter_", 1)[1]
+    query = (await state.get_data()).get("query", "")
+    results = await services.files.search(query, category=category)
+    total_pages = (len(results) + 9) // 10
+    page_items = results[:10]
+    await views.set_screen_cb(
+        callback,
+        state,
+        views.search_results_text(page_items, query, 1, total_pages),
+        search_list_kb(page_items, 1, total_pages),
+    )
+
+
+@router.callback_query(SearchCancelCB.filter())
+async def search_cancel_callback(callback: CallbackQuery, state: FSMContext, bot) -> None:
+    await state.clear()
+    await views.set_screen_cb(callback, state, "✅ تم الإلغاء.", main_menu_kb())
+
+
+@router.message(Command("cancel"))
+async def cancel_command(message: Message, state: FSMContext, bot) -> None:
+    await state.clear()
+    await views.set_screen(bot, message, state, "✅ تم الإلغاء.", main_menu_kb())
+
+
+def search_results_text(results: list, query: str, page: int, total_pages: int) -> str:
+    lines = [f"🔍 <b>نتائج البحث عن "{query}"</b>"]
+    for file in results:
+        lines.append(f"- {file.file_name}")
+    lines.append(f"\nالصفحة {page} من {total_pages}")
+    return "\n".join(lines)
