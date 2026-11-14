@@ -1,15 +1,30 @@
-pytest
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.env
+*.egg-info/
 .venv/
 venv/
-ENV/
+env/
 build/
 dist/
-*.egg-info/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
-.pytest_cache/
+
+# Editors & OS
+.idea/
+.vscode/
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
