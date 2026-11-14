@@ -191,14 +191,37 @@ class FileRepository:
     async def total_size(self) -> int | None:
         """Total storage bytes maintained live by the ``files_stats`` trigger.
 
-        Kept as a single-row counter so the app never sends a disallowed PostgREST
-        aggregate function (which raises ``PGRST123`` when aggregate queries are
-        disabled in the project).
+        Queried from the **files_stats** table (not ``files``), because that is the
+        single-row counter updated by the ``files_sync_stats`` trigger. This avoids both
+        disallowed PostgREST aggregates (PGRST123) and any ambiguity with the
+        ``files`` table.
         """
-        response = await self._request(
-            "GET",
-            params={"select": "value", "setting": "eq.total_bytes", "limit": "1"},
-        )
+        stats_endpoint = f"{self._settings.supabase_url}/rest/v1/files_stats"
+        last_error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                response = await self._client.request(
+                    "GET",
+                    stats_endpoint,
+                    params={"select": "value", "setting": "eq.total_bytes", "limit": "1"},
+                    headers=self._headers(),
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt == 2:
+                    break
+                await asyncio.sleep(0.5 * attempt)
+                continue
+
+            if response.status_code >= 400:
+                raise SupabaseError(
+                    f"GET {stats_endpoint} (files_stats) failed with "
+                    f"{response.status_code}: {response.text[:300]}"
+                )
+            break
+        else:
+            raise SupabaseError(f"files_stats request failed: {last_error}")  # pragma: no cover
+
         rows = self._rows(response)
         if not rows:
             logger.warning("files_stats.total_bytes row is missing; run migration 002")
