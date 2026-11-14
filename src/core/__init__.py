@@ -1,1 +1,1 @@
-"""Core building blocks: settings and logging."""
+"""Core: settings and logging."""

@@ -1,1 +1,1 @@
-"""Database layer (Supabase / PostgREST)."""
+"""Database layer."""

@@ -1,18 +1,17 @@
-"""Dependency container shared by handlers."""
+"""Dependency container for the bot."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from src.core.config import Settings
 from src.db.repository import FileRepository
-from src.services.files import FileService
-from src.services.storage import StorageService
+from src.services.storage import FileStorageServices
 
 
-@dataclass(frozen=True, slots=True)
 class Services:
-    settings: Settings
-    repository: FileRepository
-    storage: StorageService
-    files: FileService
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.files = FileStorageServices(settings)
+
+
+def build_services(settings: Settings) -> Services:
+    return Services(settings)
