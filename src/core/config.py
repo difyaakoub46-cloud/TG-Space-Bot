@@ -1,49 +1,93 @@
-import os
-from typing import List
-from pydantic import Field, field_validator
+"""Application settings loaded from environment variables / ``.env``."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.utils.filetypes import FileCategory
 
 
 class Settings(BaseSettings):
-    """
-    Application Settings loaded from environment variables and .env file.
-    """
+    """Strongly typed runtime configuration."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        case_sensitive=False,
+        extra="ignore",
     )
 
-    # Telegram Bot
-    BOT_TOKEN: str = Field(..., description="Telegram Bot Token from @BotFather")
+    # ── Telegram ──────────────────────────────────
+    bot_token: SecretStr
 
-    # Telegram Storage Chat/Group IDs (Physical Storage Backend)
-    STORAGE_DOCUMENTS_CHAT_ID: int = Field(..., description="Group ID for documents (PDF, DOCX, etc.)")
-    STORAGE_MEDIA_CHAT_ID: int = Field(..., description="Group ID for media (Images, Videos, GIFs)")
-    STORAGE_AUDIO_CHAT_ID: int = Field(..., description="Group ID for audio (Music, Voice)")
-    STORAGE_ARCHIVES_CHAT_ID: int = Field(..., description="Group ID for compressed files (ZIP, RAR, 7Z, TAR)")
-    STORAGE_DEFAULT_CHAT_ID: int = Field(..., description="Fallback Group ID for uncategorized files")
+    # ── Supabase (PostgREST) ────────────────────────
+    supabase_url: str
+    supabase_key: SecretStr
+    supabase_table: str = "files"
 
-    # Supabase / Database
-    SUPABASE_URL: str = Field(..., description="Supabase project URL")
-    SUPABASE_SERVICE_ROLE_KEY: str = Field(..., description="Supabase Service Role Key (full access)")
-    DATABASE_URL: str = Field(default="", description="Direct PostgreSQL connection string if needed")
+    # ── Telegram storage backends ───────────────────
+    storage_chat_documents: int
+    storage_chat_media: int
+    storage_chat_audio: int
+    storage_chat_archives: int
+    storage_chat_default: int
 
-    # Admins
-    ADMIN_IDS: List[int] = Field(default_factory=list, description="List of Admin Telegram User IDs")
+    # ── Access & behaviour ──────────────────────────
+    allowed_user_ids: str = ""
+    page_size: int = Field(default=6, ge=1, le=20)
+    request_timeout: float = Field(default=15.0, gt=0)
+    log_level: str = "INFO"
 
-    # UI & Pagination
-    DEFAULT_PAGE_SIZE: int = Field(default=5, description="Files per page in pagination")
-    MAX_SEARCH_RESULTS: int = Field(default=10, description="Max search results to display")
-
-    @field_validator("ADMIN_IDS", mode="before")
+    @field_validator("supabase_url")
     @classmethod
-    def parse_admin_ids(cls, v):
-        if isinstance(v, str):
-            if not v.strip():
-                return []
-            return [int(x.strip()) for x in v.split(",") if x.strip().isdigit()]
-        return v or []
+    def _normalize_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("SUPABASE_URL must start with http:// or https://")
+        return value
+
+    @field_validator("log_level")
+    @classmethod
+    def _normalize_level(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @property
+    def allowed_users(self) -> frozenset[int]:
+        """Parsed allowlist; an empty set means "everyone is allowed"."""
+        ids: set[int] = set()
+        for raw in self.allowed_user_ids.replace(" ", "").split(","):
+            if not raw:
+                continue
+            try:
+                ids.add(int(raw))
+            except ValueError:
+                continue
+        return frozenset(ids)
+
+    def is_user_allowed(self, user_id: int | None) -> bool:
+        if not self.allowed_users:
+            return True
+        return user_id is not None and user_id in self.allowed_users
+
+    def storage_chats(self) -> dict[FileCategory, int]:
+        """Map every file category to its dedicated Telegram storage chat."""
+        return {
+            FileCategory.DOCUMENT: self.storage_chat_documents,
+            FileCategory.IMAGE: self.storage_chat_media,
+            FileCategory.VIDEO: self.storage_chat_media,
+            FileCategory.AUDIO: self.storage_chat_audio,
+            FileCategory.ARCHIVE: self.storage_chat_archives,
+            FileCategory.OTHER: self.storage_chat_default,
+        }
+
+    def storage_chat_for(self, category: FileCategory) -> int:
+        return self.storage_chats()[category]
 
 
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Cached settings singleton."""
+    return Settings()  # type: ignore[call-arg]
