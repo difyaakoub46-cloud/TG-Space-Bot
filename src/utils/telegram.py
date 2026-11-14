@@ -28,6 +28,7 @@ async def call_with_retry(
     *args: Any,
     attempts: int = DEFAULT_ATTEMPTS,
     base_delay: float = DEFAULT_BASE_DELAY,
+    chat_id_out: list[int] | None = None,
     **kwargs: Any,
 ) -> T:
     """Call a Telegram API method, surviving flood limits, network errors and chat migration.
@@ -35,8 +36,13 @@ async def call_with_retry(
     ``TelegramRetryAfter`` is honored with the exact server-provided delay, network
     failures use exponential backoff, and ``TelegramMigrateToChat`` transparently
     retargets the call to the upgraded supergroup id.
+
+    When ``chat_id_out`` is given, it is updated with the ``chat_id`` actually used
+    for the successful call (important after a group → supergroup migration).
     """
     for attempt in range(1, attempts + 1):
+        if chat_id_out is not None:
+            chat_id_out[0] = kwargs.get("chat_id", chat_id_out[0])
         try:
             return await call(*args, **kwargs)
         except TelegramRetryAfter as exc:
@@ -50,6 +56,8 @@ async def call_with_retry(
                 raise
             logger.warning("Chat migrated to %s, retrying", exc.migrate_to_chat_id)
             kwargs["chat_id"] = exc.migrate_to_chat_id
+            if chat_id_out is not None:
+                chat_id_out[0] = exc.migrate_to_chat_id
         except TelegramNetworkError as exc:
             if attempt >= attempts:
                 raise

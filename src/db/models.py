@@ -38,17 +38,25 @@ class StoredFile:
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "StoredFile":
+        """Reconstruct a StoredFile from a PostgREST row.
+
+        The remote table keeps the physical columns ``chat_id``,
+        ``message_id``, ``user_id``, ``file_size`` and ``file_type`` (the MIME
+        string). The app-facing property names (``storage_chat_id``,
+        ``storage_message_id``, ``uploader_id``, ``size_bytes``, ``mime_type``)
+        are preserved for callers.
+        """
         return cls(
             id=str(row["id"]),
             file_id=str(row.get("file_id") or ""),
             file_unique_id=row.get("file_unique_id"),
             file_name=str(row.get("file_name") or "بدون اسم"),
             category=parse_category(row.get("category")),
-            mime_type=row.get("mime_type"),
-            size_bytes=int(row.get("size_bytes") or 0),
-            uploader_id=int(row["uploader_id"]) if row.get("uploader_id") is not None else None,
-            storage_chat_id=int(row["storage_chat_id"]),
-            storage_message_id=int(row["storage_message_id"]),
+            mime_type=row.get("file_type"),
+            size_bytes=int(row.get("file_size") or 0),
+            uploader_id=int(row["user_id"]) if row.get("user_id") is not None else None,
+            storage_chat_id=int(row["chat_id"]),
+            storage_message_id=int(row["message_id"]),
             created_at=_parse_datetime(row.get("created_at")),
         )
 

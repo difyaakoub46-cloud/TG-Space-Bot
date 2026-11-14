@@ -32,23 +32,37 @@ class StorageService:
     async def upload(self, message: Message, candidate: FileCandidate) -> tuple[int, int]:
         """Copy a user's file into its category group; returns ``(chat_id, message_id)``."""
         target_chat_id = self._settings.storage_chat_for(candidate.category)
+        # chat_id_out is captured so we keep the (possibly migrated) destination id.
+        chat_id_out: list[int] = [target_chat_id]
         stored = await call_with_retry(
             self._bot.copy_message,
             chat_id=target_chat_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
+            chat_id_out=chat_id_out,
         )
-        # The real chat id can differ after a group → supergroup migration.
-        return stored.chat.id, stored.message_id
+        # aiogram returns a MessageId here, not a full Message, so we cannot read
+        # ``stored.chat``. We rely on the destination chat id that was actually used.
+        return chat_id_out[0], stored.message_id
 
-    async def deliver(self, storage_chat_id: int, storage_message_id: int, target_chat_id: int) -> Message:
-        """Send the stored copy back to a user without downloading anything."""
-        return await call_with_retry(
+    async def deliver(
+        self, storage_chat_id: int, storage_message_id: int, target_chat_id: int
+    ) -> tuple[int, int]:
+        """Send the stored copy back to a user without downloading anything.
+
+        Returns ``(chat_id, message_id)`` of the delivered copy. aiogram returns a
+        ``MessageId`` (not a full ``Message``) from ``copy_message``, so we can't read
+        ``.chat`` and instead report the destination chat id that was actually used.
+        """
+        chat_id_out: list[int] = [target_chat_id]
+        stored = await call_with_retry(
             self._bot.copy_message,
             chat_id=target_chat_id,
             from_chat_id=storage_chat_id,
             message_id=storage_message_id,
+            chat_id_out=chat_id_out,
         )
+        return chat_id_out[0], stored.message_id
 
     async def remove(self, storage_chat_id: int, storage_message_id: int) -> bool:
         """Delete the stored copy. Returns ``False`` when it was already gone."""

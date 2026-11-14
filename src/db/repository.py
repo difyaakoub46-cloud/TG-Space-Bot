@@ -15,8 +15,6 @@ from src.utils.filetypes import FileCategory
 
 logger = logging.getLogger(__name__)
 
-# PostgREST treats these characters as filter/pattern syntax; strip them so a
-# user supplied search term can never change the shape of the query.
 _UNSAFE_QUERY_CHARS = re.compile(r"[^0-9A-Za-z\u0600-\u06FF .\-]")
 _MAX_QUERY_LENGTH = 80
 
@@ -47,7 +45,6 @@ class FileRepository:
         self._client = client or httpx.AsyncClient(timeout=settings.request_timeout)
         self._endpoint = f"{settings.supabase_url}/rest/v1/{settings.supabase_table}"
 
-    # ── plumbing ────────────────────────────────
     def _headers(self, prefer: str | None = None) -> dict[str, str]:
         key = self._settings.supabase_key.get_secret_value()
         headers = {
@@ -98,10 +95,36 @@ class FileRepository:
             return [payload]
         return []
 
-    # ── public API ──────────────────────────────
     async def create(self, **fields: Any) -> StoredFile:
+        """Insert a file row using the real table column names.
+
+        The application passes app-level names (``storage_chat_id``,
+        ``storage_message_id``, ``uploader_id``, ``mime_type``, ``size_bytes``);
+        this remaps them to the physical columns so PostgREST never sees an unknown
+        column (which would raise 42703).
+        """
+        mapped: dict[str, Any] = dict(fields)
+
+        # size
+        if "size_bytes" in mapped and "file_size" not in mapped:
+            mapped["file_size"] = mapped.pop("size_bytes")
+
+        # storage location (real table: chat_id / message_id)
+        if "storage_chat_id" in mapped and "chat_id" not in mapped:
+            mapped["chat_id"] = mapped.pop("storage_chat_id")
+        if "storage_message_id" in mapped and "message_id" not in mapped:
+            mapped["message_id"] = mapped.pop("storage_message_id")
+
+        # owner (real table: user_id)
+        if "uploader_id" in mapped and "user_id" not in mapped:
+            mapped["user_id"] = mapped.pop("uploader_id")
+
+        # detailed type (real table: file_type, not mime_type)
+        if "mime_type" in mapped and "file_type" not in mapped:
+            mapped["file_type"] = mapped.pop("mime_type")
+
         response = await self._request(
-            "POST", json=fields, prefer="return=representation"
+            "POST", json=mapped, prefer="return=representation"
         )
         rows = self._rows(response)
         if not rows:
@@ -166,24 +189,22 @@ class FileRepository:
         return StoredFile.from_row(rows[0]) if rows else None
 
     async def total_size(self) -> int | None:
-        """Sum stored bytes using a PostgREST aggregate; ``None`` if unsupported."""
-        try:
-            response = await self._request(
-                "GET", params={"select": "size_bytes.sum()"}
-            )
-        except SupabaseError as exc:
-            logger.warning("Aggregate query failed: %s", exc)
-            return None
+        """Total storage bytes maintained live by the ``files_stats`` trigger.
 
+        Kept as a single-row counter so the app never sends a disallowed PostgREST
+        aggregate function (which raises ``PGRST123`` when aggregate queries are
+        disabled in the project).
+        """
+        response = await self._request(
+            "GET",
+            params={"select": "value", "setting": "eq.total_bytes", "limit": "1"},
+        )
         rows = self._rows(response)
         if not rows:
-            return 0
-        row = rows[0]
-        for key in ("sum", "size_bytes_sum", "sum_size_bytes"):
-            value = row.get(key)
-            if value is not None:
-                return int(value)
-        return None
+            logger.warning("files_stats.total_bytes row is missing; run migration 002")
+            return None
+        value = rows[0].get("value")
+        return int(value) if value is not None else None
 
     async def close(self) -> None:
         if self._owns_client:

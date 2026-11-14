@@ -11,28 +11,30 @@ create table if not exists public.files (
     file_id             text        not null,
     file_unique_id      text,
     file_name           text        not null,
+    file_type           text,                       -- MIME type of the stored file
     category            text        not null,
-    mime_type           text,
-    size_bytes          bigint      not null default 0,
-    uploader_id         bigint,
-    storage_chat_id     bigint      not null,
-    storage_message_id  bigint      not null,
+    file_size           bigint      not null default 0,
+    user_id             bigint,
+    chat_id             bigint      not null,
+    message_id          bigint      not null,
     created_at          timestamptz not null default timezone('utc', now()),
     updated_at          timestamptz not null default timezone('utc', now()),
     constraint files_category_check
         check (category in ('document', 'image', 'video', 'audio', 'archive', 'other')),
-    constraint files_size_bytes_check
-        check (size_bytes >= 0),
+    constraint files_file_size_check
+        check (file_size >= 0),
     constraint files_storage_message_key
-        unique (storage_chat_id, storage_message_id)
+        unique (chat_id, message_id)
 );
 
 comment on table public.files is
     'Metadata for files physically stored inside Telegram storage groups.';
-comment on column public.files.storage_chat_id is
+comment on column public.files.chat_id is
     'Telegram chat id of the storage group holding the file.';
-comment on column public.files.storage_message_id is
+comment on column public.files.message_id is
     'Message id of the stored copy inside the storage group.';
+comment on column public.files.file_type is
+    'MIME type of the stored file (e.g. application/pdf).';
 
 create index if not exists files_created_at_idx
     on public.files (created_at desc);
