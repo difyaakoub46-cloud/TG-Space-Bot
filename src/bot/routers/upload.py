@@ -1,4 +1,4 @@
-"""File ingestion: route every incoming file to its Telegram storage group."""
+"""File ingestion: move every incoming file into its storage group."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from src.bot import views
 from src.bot.keyboards import file_actions_kb, main_menu_kb
 from src.services.container import Services
 from src.utils.filetypes import extract_candidate
-from src.utils.telegram import safe_edit_text
+from src.utils.telegram import safe_delete_message, safe_edit_text
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,10 @@ router = Router(name="upload")
 
 SUPPORTED_MEDIA = (
     F.document | F.photo | F.video | F.audio | F.voice | F.animation | F.video_note
+)
+
+FAILED_TEXT = (
+    "❌ فشل حفظ الملف. تأكد من إعدادات مجموعات التخزين وصلاحيات البوت."
 )
 
 
@@ -33,7 +37,7 @@ async def handle_upload(
         return
 
     await views.reset_flow(state)
-    status = await message.answer("⏳ جارٍ رفع الملف إلى مجموعة التخزين…")
+    status = await message.answer("⏳ جارٍ نقل الملف إلى مجموعة التخزين…")
 
     try:
         record = await services.files.save_from_message(message, candidate)
@@ -43,15 +47,20 @@ async def handle_upload(
             bot,
             status.chat.id,
             status.message_id,
-            "❌ فشل حفظ الملف. تأكد من إعدادات مجموعات التخزين وصلاحيات البوت.",
+            FAILED_TEXT,
             reply_markup=main_menu_kb(),
         )
         return
 
-    await safe_edit_text(
+    # The copy now lives in its storage group, so the original message and the
+    # status bubble are removed. The result is rendered on the single persistent
+    # screen instead, which keeps the chat free of one message per upload.
+    await safe_delete_message(bot, message.chat.id, message.message_id)
+    await safe_delete_message(bot, status.chat.id, status.message_id)
+    await views.set_screen(
         bot,
-        status.chat.id,
-        status.message_id,
+        message,
+        state,
         views.file_saved_text(record),
-        reply_markup=file_actions_kb(record.id),
+        file_actions_kb(record.id),
     )
