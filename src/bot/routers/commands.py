@@ -7,60 +7,100 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from src.bot import views
-from src.bot.keyboards import BTN_HELP, MenuCB, back_to_menu_kb, main_menu_kb
+from src.bot import navigation, views
+from src.bot.keyboards import BTN_HELP, MenuCB
 from src.services.container import Services
 
 router = Router(name="commands")
 
 
-async def _main_menu(message: Message, state: FSMContext, bot) -> None:
-    # The main menu is the only surviving message: everything above it is wiped.
-    await views.clear_tracked(bot, message.chat.id, state)
-    await views.reset_flow(state)
-    await views.set_screen(bot, message, state, views.welcome_text(), main_menu_kb())
+async def _main_menu(
+    message: Message, state: FSMContext, bot, services: Services
+) -> None:
+    """Wipe the whole log and leave a single fresh welcome screen behind."""
+    await views.clear_tracked(bot, message.chat.id, state, upto=message.message_id)
+    await views.reset_flow(state, keep_nav=False)
+    await state.update_data(trail=[], screen_key=dict(navigation.MAIN))
+    await navigation.navigate_message(
+        message, state, bot, services, navigation.MAIN, push=False
+    )
     await views.remember(state, message.message_id)
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, bot) -> None:
-    await _main_menu(message, state, bot)
+async def cmd_start(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    await _main_menu(message, state, bot, services)
 
 
 @router.message(Command("help"))
 @router.message(F.text == BTN_HELP)
-async def cmd_help(message: Message, state: FSMContext, bot) -> None:
+async def cmd_help(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
     await views.reset_flow(state)
     await views.remember(state, message.message_id)
-    await views.set_screen(bot, message, state, views.help_text(), back_to_menu_kb())
+    await navigation.navigate_message(message, state, bot, services, {"k": "help"})
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext, bot) -> None:
-    await _main_menu(message, state, bot)
+async def cmd_cancel(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    await _main_menu(message, state, bot, services)
 
 
 @router.callback_query(MenuCB.filter(F.action == "main"))
-async def menu_main_callback(callback: CallbackQuery, state: FSMContext, bot) -> None:
+async def menu_main_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
     if callback.message is not None:
         await views.clear_tracked(
-            callback.bot, callback.message.chat.id, state
+            bot,
+            callback.message.chat.id,
+            state,
+            upto=callback.message.message_id,
         )
+    await views.reset_flow(state, keep_nav=False)
+    await state.update_data(trail=[], screen_key=dict(navigation.MAIN))
+    await navigation.navigate_callback(
+        callback, state, bot, services, navigation.MAIN, push=False
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "back"))
+async def menu_back_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    # Going back only changes the screen: nothing is deleted.
     await views.reset_flow(state)
-    await views.set_screen_cb(callback, state, views.welcome_text(), main_menu_kb())
+    await navigation.go_back(callback, state, services)
 
 
 @router.callback_query(MenuCB.filter(F.action == "help"))
-async def menu_help_callback(callback: CallbackQuery, state: FSMContext, bot) -> None:
+async def menu_help_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
     await views.reset_flow(state)
-    await views.set_screen_cb(callback, state, views.help_text(), back_to_menu_kb())
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "help"}
+    )
 
 
 @router.callback_query(MenuCB.filter(F.action == "cancel"))
-async def menu_cancel_callback(callback: CallbackQuery, state: FSMContext, bot) -> None:
+async def menu_cancel_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
     await views.reset_flow(state)
-    await views.set_screen_cb(
-        callback, state, "✅ تم إلغاء العملية.", main_menu_kb()
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        navigation.MAIN,
+        notice="✅ تم إلغاء العملية.",
+        push=False,
     )
 
 
@@ -69,9 +109,8 @@ async def menu_stats_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
     await views.reset_flow(state)
-    stats = await services.files.stats()
-    await views.set_screen_cb(
-        callback, state, views.stats_text(stats), back_to_menu_kb()
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "stats"}
     )
 
 
@@ -81,7 +120,4 @@ async def cmd_stats(
 ) -> None:
     await views.reset_flow(state)
     await views.remember(state, message.message_id)
-    stats = await services.files.stats()
-    await views.set_screen(
-        bot, message, state, views.stats_text(stats), back_to_menu_kb()
-    )
+    await navigation.navigate_message(message, state, bot, services, {"k": "stats"})
