@@ -128,6 +128,38 @@ async def folder_put_callback(
     )
 
 
+@router.callback_query(FolderCB.filter(F.action == "favorite"))
+@router.callback_query(FolderCB.filter(F.action == "unfavorite"))
+async def folder_favorite_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Star or unstar a folder so it becomes a shortcut on the library screen."""
+    data = FolderCB.unpack(callback.data)
+    user_id = _user_id(callback)
+    favorite = data.action == "favorite"
+
+    folder = await services.files.set_favorite(data.value, user_id, favorite)
+    if folder is None:
+        await callback.answer("المجلد غير موجود.", show_alert=True)
+        return
+
+    files = await services.files.folder_files(folder.id)
+    notice = (
+        "⭐ أُضيف المجلد إلى المفضلة، وصار يظهر في شاشة المكتبة."
+        if favorite
+        else "🌟 أُزيل المجلد من المفضلة."
+    )
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        _folder_key(user_id, folder.id),
+        notice=notice + "\n\n" + views.folder_text(folder, files),
+        push=False,
+    )
+
+
 @router.callback_query(FolderCB.filter(F.action == "delete"))
 async def folder_delete_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
