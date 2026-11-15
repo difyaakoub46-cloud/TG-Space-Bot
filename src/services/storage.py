@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from typing import Any
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramMigrateToChat,
+)
 from aiogram.types import Message
 
 from src.core.config import Settings
@@ -28,42 +33,68 @@ class StorageService:
     def __init__(self, bot: Bot, settings: Settings) -> None:
         self._bot = bot
         self._settings = settings
+        # Old basic-group id -> supergroup id, learned from Telegram on first use.
+        # Telegram upgrades groups to supergroups on its own and then rejects the
+        # previous id, so the mapping is followed instead of failing every upload.
+        self._migrated: dict[int, int] = {}
 
     @property
     def bot(self) -> Bot:
         return self._bot
+
+    def _current(self, chat_id: int) -> int:
+        return self._migrated.get(chat_id, chat_id)
+
+    async def _call(self, method, chat_id: int, **kwargs: Any) -> tuple[Any, int]:
+        """Run a chat method, following a group-to-supergroup migration once."""
+        target = self._current(chat_id)
+        try:
+            return await call_with_retry(method, chat_id=target, **kwargs), target
+        except TelegramMigrateToChat as exc:
+            new_id = exc.migrate_to_chat_id
+            logger.warning(
+                "Storage chat %s was upgraded to the supergroup %s; using the new "
+                "id from now on. Update TG_STORAGE_CHAT_* in the environment to "
+                "make it permanent.",
+                target,
+                new_id,
+            )
+            self._migrated[chat_id] = new_id
+            self._migrated[target] = new_id
+            result = await call_with_retry(method, chat_id=new_id, **kwargs)
+            return result, new_id
 
     async def upload(
         self, message: Message, candidate: FileCandidate
     ) -> tuple[int, int]:
         """Copy a user's file into its category group; returns ``(chat_id, message_id)``."""
         target_chat_id = self._settings.storage_chat_for(candidate.category)
-        stored = await call_with_retry(
+        stored, used_chat_id = await self._call(
             self._bot.copy_message,
-            chat_id=target_chat_id,
+            target_chat_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
         )
-        return target_chat_id, stored.message_id
+        return used_chat_id, stored.message_id
 
     async def deliver(
         self, storage_chat_id: int, storage_message_id: int, target_chat_id: int
     ) -> tuple[int, int]:
         """Send the stored copy back to a user without downloading anything."""
-        stored = await call_with_retry(
+        stored, used_chat_id = await self._call(
             self._bot.copy_message,
-            chat_id=target_chat_id,
-            from_chat_id=storage_chat_id,
+            target_chat_id,
+            from_chat_id=self._current(storage_chat_id),
             message_id=storage_message_id,
         )
-        return target_chat_id, stored.message_id
+        return used_chat_id, stored.message_id
 
     async def remove(self, storage_chat_id: int, storage_message_id: int) -> bool:
         """Delete the stored copy. Returns ``False`` when it was already gone."""
         try:
-            await call_with_retry(
+            await self._call(
                 self._bot.delete_message,
-                chat_id=storage_chat_id,
+                storage_chat_id,
                 message_id=storage_message_id,
             )
             return True
@@ -82,7 +113,7 @@ class StorageService:
         unreachable: list[int] = []
         for chat_id in self._unique_chats():
             try:
-                chat = await self._bot.get_chat(chat_id)
+                chat = await self._bot.get_chat(self._current(chat_id))
             except TelegramAPIError as exc:
                 logger.error(
                     "Storage chat %s is unreachable (%s). Add the bot as an admin.",
