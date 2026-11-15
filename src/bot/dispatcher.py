@@ -49,11 +49,11 @@ async def on_error(event: ErrorEvent) -> None:
 def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
 
-    access = AccessMiddleware(services)
+    access_guard = AccessMiddleware(services)
     middleware = ContextMiddleware(services)
     # Order matters: the allow-list runs before anything else touches the update.
-    dispatcher.message.outer_middleware(access)
-    dispatcher.callback_query.outer_middleware(access)
+    dispatcher.message.outer_middleware(access_guard)
+    dispatcher.callback_query.outer_middleware(access_guard)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
     # Member updates only need the services: the owner check happens in the handler.
@@ -66,7 +66,7 @@ def build_dispatcher(services: Services) -> Dispatcher:
         search.router,
         browse.router,
         folders.router,
-        access_gate.router,
+        access.router,
         fallback.router,
     )
 
