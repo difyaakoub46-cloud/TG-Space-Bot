@@ -174,10 +174,10 @@ class FileRepository:
         )
         return _parse_total(response.headers.get("content-range"))
 
-    async def category_counts(self) -> dict[str, int]:
+    async def category_counts(self) -> dict[FileCategory, int]:
         categories = list(FileCategory)
         results = await asyncio.gather(*(self.count(category=cat) for cat in categories))
-        return {cat.value: total for cat, total in zip(categories, results)}
+        return {cat: total for cat, total in zip(categories, results)}
 
     async def delete(self, file_id: str) -> StoredFile | None:
         response = await self._request(

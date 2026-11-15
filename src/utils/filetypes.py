@@ -44,6 +44,8 @@ class FileCandidate:
     file_name: str
     mime_type: str
     category: FileCategory
+    file_id: str = ""
+    file_unique_id: str | None = None
     file_size: int = 0
     thumbnail_file_id: str | None = None
 
@@ -78,6 +80,16 @@ def classify(mime: str, name: str) -> FileCategory:
     return FileCategory.other
 
 
+def parse_category(value: Any) -> FileCategory:
+    """Best-effort conversion of a stored category value into a FileCategory."""
+    if isinstance(value, FileCategory):
+        return value
+    try:
+        return FileCategory(str(value or "").strip().lower())
+    except ValueError:
+        return FileCategory.other
+
+
 def extract_candidate(message: Message) -> FileCandidate | None:
     document = message.document
     photo = message.photo
@@ -95,6 +107,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type=mime,
             category=classify(mime, name),
+            file_id=document.file_id,
+            file_unique_id=document.file_unique_id,
             file_size=document.file_size,
             thumbnail_file_id=thumb.file_id if thumb else None,
         )
@@ -106,6 +120,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type="image/jpeg",
             category=FileCategory.image,
+            file_id=last.file_id,
+            file_unique_id=last.file_unique_id,
             file_size=last.file_size,
             thumbnail_file_id=last.file_id,
         )
@@ -117,6 +133,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type=mime,
             category=FileCategory.video,
+            file_id=video.file_id,
+            file_unique_id=video.file_unique_id,
             file_size=video.file_size,
         )
 
@@ -127,6 +145,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type=mime,
             category=FileCategory.audio,
+            file_id=audio.file_id,
+            file_unique_id=audio.file_unique_id,
             file_size=audio.file_size,
         )
 
@@ -136,6 +156,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type="audio/ogg",
             category=FileCategory.audio,
+            file_id=voice.file_id,
+            file_unique_id=voice.file_unique_id,
             file_size=voice.file_size,
         )
 
@@ -146,6 +168,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type=mime,
             category=FileCategory.video,
+            file_id=animation.file_id,
+            file_unique_id=animation.file_unique_id,
             file_size=animation.file_size,
         )
 
@@ -155,6 +179,8 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_name=name,
             mime_type="video/mp4",
             category=FileCategory.video,
+            file_id=video_note.file_id,
+            file_unique_id=video_note.file_unique_id,
             file_size=video_note.file_size,
         )
 
