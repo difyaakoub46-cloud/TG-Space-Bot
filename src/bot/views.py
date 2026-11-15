@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from src.db.models import StoredFile
+from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size
 
@@ -239,7 +239,8 @@ def welcome_text() -> str:
         "أرسل أي ملف الآن، أو تنقّل عبر الأزرار أدناه.\n\n"
         "📚 المكتبة — تصفح الملفات حسب الفئة\n"
         "🔍 بحث — البحث بالاسم داخل المكتبة\n"
-        "📊 إحصائيات — عدد الملفات والحجم الإجمالي"
+        "📊 إحصائيات — عدد الملفات والحجم الإجمالي\n"
+        "📁 المجلدات — مجموعات افتراضية للتنظيم السريع"
     )
 
 
@@ -251,7 +252,8 @@ def help_text() -> str:
         "• /search للبحث عن ملف محفوظ بالاسم.\n"
         "• /stats لعرض الإحصائيات.\n"
         "• /cancel لإلغاء أي عملية جارية.\n\n"
-        "كل التنقل يتم عبر الأزرار وتعديل الرسالة نفسها، دون تراكم رسائل."
+        "من صفحة أي ملف يمكنك: إرساله، حذفه، إعادة تسميته، أو إضافته إلى مجلد.\n"
+        "المجلدات تسميات تنظيمية فقط؛ الملف يبقى في مجموعة تيليغرام الخاصة بفئته."
     )
 
 
@@ -331,12 +333,65 @@ def file_saved_text(record: StoredFile) -> str:
     )
 
 
-def file_text(record: StoredFile) -> str:
+def file_text(record: StoredFile, folders: Sequence[str] = ()) -> str:
+    lines = [
+        f"📄 <b>{_escape(record.file_name)}</b>",
+        "",
+        f"الفئة: {category_label(record.category)}",
+        f"الحجم: {_escape(record.size_human)}",
+        f"تاريخ الحفظ: {_escape(record.created_human)}",
+        f"المجلدات: {_escape('، '.join(folders)) if folders else '—'}",
+    ]
+    return "\n".join(lines)
+
+
+def folders_text(folders: Sequence[Folder]) -> str:
+    lines = [
+        "📁 <b>المجلدات</b>",
+        "",
+        "مجلدات افتراضية للتنظيم والاختصار — الملفات نفسها تبقى في مجموعات تيليغرام.",
+        "",
+    ]
+    if folders:
+        lines.append("اختر مجلداً لعرض ملفاته:")
+    else:
+        lines.append("لا توجد مجلدات بعد. أنشئ أول مجلد بـ«➕ مجلد جديد». ")
+    return "\n".join(lines)
+
+
+def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
+    lines = [
+        f"📁 <b>{_escape(folder.name)}</b> — {format_number(len(files))} ملف",
+        "",
+    ]
+    if files:
+        lines.append("اختر ملفاً لعرضه:")
+    else:
+        lines.append("لا توجد ملفات في هذا المجلد بعد.")
+        lines.append("أضف ملفاً من صفحته عبر «📁 إضافة إلى مجلد».")
+    return "\n".join(lines)
+
+
+def pick_folder_text(record: StoredFile) -> str:
     return (
-        f"📄 <b>{_escape(record.file_name)}</b>\n\n"
-        f"الفئة: {category_label(record.category)}\n"
-        f"الحجم: {_escape(record.size_human)}\n"
-        f"تاريخ الحفظ: {_escape(record.created_human)}"
+        "📁 <b>إضافة إلى مجلد</b>\n\n"
+        f"الملف: {_escape(record.file_name)}\n\n"
+        "اختر المجلد الذي تريد ربط الملف به:"
+    )
+
+
+def new_folder_text() -> str:
+    return (
+        "➕ <b>مجلد جديد</b>\n\n"
+        "أرسل اسم المجلد الآن (مثال: محاضرات، صور العائلة، مشروع التخرج)."
+    )
+
+
+def rename_prompt_text(record: StoredFile) -> str:
+    return (
+        "✏️ <b>إعادة تسمية الملف</b>\n\n"
+        f"الاسم الحالي: {_escape(record.file_name)}\n\n"
+        "أرسل الاسم الجديد كما تريده:"
     )
 
 
