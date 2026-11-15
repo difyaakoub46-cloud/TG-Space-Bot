@@ -1,21 +1,88 @@
-"""View helpers: single persistent screen and text builders."""
+"""View helpers: the single persistent screen plus all text builders."""
 
 from __future__ import annotations
 
+import html
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from src.core.config import Settings
 from src.db.models import StoredFile
+from src.utils.filetypes import FileCategory
+from src.utils.formatters import format_number, human_size
+
+_NOT_MODIFIED = "message is not modified"
+
+CATEGORY_LABELS: dict[FileCategory, str] = {
+    FileCategory.document: "📄 مستندات",
+    FileCategory.image: "🖼 صور",
+    FileCategory.video: "🎬 فيديو",
+    FileCategory.audio: "🎧 صوت",
+    FileCategory.archive: "🗜 أرشيف",
+    FileCategory.other: "📦 أخرى",
+}
 
 
+def category_label(category: FileCategory | str) -> str:
+    if isinstance(category, FileCategory):
+        return CATEGORY_LABELS.get(category, category.value)
+    try:
+        return CATEGORY_LABELS[FileCategory(str(category))]
+    except ValueError:
+        return str(category)
+
+
+def _escape(value: Any) -> str:
+    return html.escape(str(value), quote=False)
+
+
+# --------------------------------------------------------------------------- #
+# Single-screen helpers
+# --------------------------------------------------------------------------- #
 async def delete_screen_message(bot: Bot, chat_id: int, message_id: int) -> None:
+    if not message_id:
+        return
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except TelegramAPIError:
         pass
+
+
+async def _render_screen(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+) -> bool:
+    """Edit one message in place. Returns True when the screen is up to date."""
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
+        return True
+    except TelegramBadRequest as exc:
+        if _NOT_MODIFIED in str(exc).lower():
+            return True
+        return False
+    except TelegramAPIError:
+        return False
+
+
+async def reset_flow(state: FSMContext) -> None:
+    """End the current workflow while keeping the tracked screen message."""
+    screen_id = (await state.get_data()).get("screen_message_id")
+    await state.clear()
+    if screen_id:
+        await state.update_data(screen_message_id=screen_id)
 
 
 async def set_screen(
@@ -25,21 +92,19 @@ async def set_screen(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
+    """Render the screen by editing the tracked message, or send a first one."""
+    chat_id = message.chat.id
     screen_id = (await state.get_data()).get("screen_message_id")
-    try:
-        if screen_id:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=screen_id,
-                text=text,
-                reply_markup=reply_markup,
-            )
-            await state.update_data(screen_message_id=screen_id)
-            return
-    except TelegramAPIError:
-        await delete_screen_message(bot, message.chat.id, screen_id or 0)
 
-    sent = await message.answer(text, reply_markup=reply_markup)
+    if screen_id and await _render_screen(bot, chat_id, screen_id, text, reply_markup):
+        return
+
+    if screen_id:
+        await delete_screen_message(bot, chat_id, screen_id)
+
+    sent = await message.answer(
+        text, reply_markup=reply_markup, disable_web_page_preview=True
+    )
     await state.update_data(screen_message_id=sent.message_id)
 
 
@@ -49,89 +114,160 @@ async def set_screen_cb(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    screen_id = (await state.get_data()).get("screen_message_id")
-    try:
-        if screen_id:
-            await callback.message.edit_text(
-                text=text,
-                reply_markup=reply_markup,
-            )
-            await state.update_data(screen_message_id=screen_id)
-            await callback.answer()
-            return
-    except TelegramAPIError:
-        await delete_screen_message(callback.bot, callback.message.chat.id, screen_id or 0)
+    """Same as :func:`set_screen` for callback queries, then clears the spinner."""
+    if callback.message is None:
+        await callback.answer("انتهت صلاحية هذه الرسالة، استخدم /start.", show_alert=True)
+        return
 
-    sent = await callback.message.answer(text, reply_markup=reply_markup)
+    bot = callback.bot
+    chat_id = callback.message.chat.id
+    screen_id = (await state.get_data()).get("screen_message_id")
+
+    if screen_id and await _render_screen(bot, chat_id, screen_id, text, reply_markup):
+        await callback.answer()
+        return
+
+    if screen_id:
+        await delete_screen_message(bot, chat_id, screen_id)
+
+    # No tracked screen: reuse the message the button belongs to when possible.
+    if await _render_screen(
+        bot, chat_id, callback.message.message_id, text, reply_markup
+    ):
+        await state.update_data(screen_message_id=callback.message.message_id)
+        await callback.answer()
+        return
+
+    sent = await callback.message.answer(
+        text, reply_markup=reply_markup, disable_web_page_preview=True
+    )
     await state.update_data(screen_message_id=sent.message_id)
     await callback.answer()
 
 
-def welcome_text(settings: Settings | None = None) -> str:
+# --------------------------------------------------------------------------- #
+# Text builders
+# --------------------------------------------------------------------------- #
+def welcome_text() -> str:
     return (
         "👋 مرحباً بك في TG-Space-Bot\n\n"
-        "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة.\n"
-        "يمكنك تصفح المكتبة، البحث عن ملفات، ورؤية الإحصائيات.\n\n"
-        "استخدم الأزرار أدناه للبدء."
+        "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة تلقائياً.\n"
+        "أرسل أي ملف الآن، أو تنقّل عبر الأزرار أدناه.\n\n"
+        "📚 المكتبة — تصفح الملفات حسب الفئة\n"
+        "🔍 بحث — البحث بالاسم داخل المكتبة\n"
+        "📊 إحصائيات — عدد الملفات والحجم الإجمالي"
     )
 
 
 def help_text() -> str:
     return (
         "📖 <b>مساعدة</b>\n\n"
-        "- أرسِل أي ملف وسيتم حفظه تلقائياً في مجموعة التخزين المناسبة.\n"
-        "- استخدم /library لتصفح المكتبة.\n"
-        "- استخدم /search للبحث عن ملفات محفوظة.\n"
-        "- استخدم /stats لرؤية إحصائيات المكتبة.\n\n"
-        "كل التنقل يتم عبر الأزرارinline لتقليل الرسائل."
+        "• أرسل أي ملف (مستند، صورة، فيديو، صوت، أرشيف) وسيُحفظ في مجموعته المناسبة.\n"
+        "• /library لتصفح المكتبة حسب الفئة.\n"
+        "• /search للبحث عن ملف محفوظ بالاسم.\n"
+        "• /stats لعرض الإحصائيات.\n"
+        "• /cancel لإلغاء أي عملية جارية.\n\n"
+        "كل التنقل يتم عبر الأزرار وتعديل الرسالة نفسها، دون تراكم رسائل."
     )
 
 
-def stats_text(stats: dict[str, int]) -> str:
-    total = stats.get("total", 0)
-    return (
-        f"📊 <b>إحصائيات المكتبة</b>\n\n"
-        f"إجمالي الملفات: {total}\n"
-    )
+def stats_text(stats: Mapping[str, Any]) -> str:
+    total = int(stats.get("total", 0))
+    total_bytes = int(stats.get("total_bytes", 0))
+    categories = stats.get("categories") or {}
+
+    lines = [
+        "📊 <b>إحصائيات المكتبة</b>",
+        "",
+        f"إجمالي الملفات: <b>{format_number(total)}</b>",
+        f"الحجم الإجمالي: <b>{_escape(human_size(total_bytes))}</b>",
+    ]
+    if categories:
+        lines.append("")
+        for category, count in categories.items():
+            label = category_label(category)
+            lines.append(f"{label}: {format_number(int(count))}")
+    return "\n".join(lines)
 
 
-def categories_text(counts: dict[str, int]) -> str:
-    lines = ["📚 <b>المكتبة</b>"]
-    for category, count in counts.items():
-        lines.append(f"- {category.capitalize()}: {count}")
+def categories_text(counts: Mapping[FileCategory | str, int]) -> str:
+    lines = ["📚 <b>المكتبة</b>", "", "اختر فئة لعرض ملفاتها:"]
+    if not counts:
+        lines.append("لا توجد ملفات محفوظة بعد.")
+    return "\n".join(lines)
+
+
+def category_text(category: FileCategory | str, files: Sequence[StoredFile]) -> str:
+    label = category_label(category)
+    lines = [f"{label} — <b>{format_number(len(files))}</b> ملف", ""]
+    if not files:
+        lines.append("لا توجد ملفات في هذه الفئة.")
     return "\n".join(lines)
 
 
 def search_prompt_text() -> str:
     return (
-        "🔍 <b>أدخل اسم الملف</b>\n\n"
-        "اكتب اسم الملف أو جزء منه للبحث.\n"
-        "يمكنك إلغاء العملية بأي وقت."
+        "🔍 <b>بحث في المكتبة</b>\n\n"
+        "اكتب اسم الملف أو جزءاً منه، ثم أرسله.\n"
+        "يمكنك الإلغاء في أي وقت."
     )
+
+
+def search_results_text(
+    results: Sequence[StoredFile],
+    query: str,
+    page: int,
+    total_pages: int,
+    total: int | None = None,
+) -> str:
+    headline = f"🔍 <b>نتائج البحث عن «{_escape(query)}»</b>"
+    if not results:
+        return f"{headline}\n\nلا توجد نتائج مطابقة."
+
+    lines = [headline]
+    if total is not None:
+        lines.append(f"عدد النتائج: {format_number(total)}")
+    lines.append("")
+    for file in results:
+        lines.append(
+            f"• {_escape(file.file_name)} — {_escape(file.size_human)}"
+        )
+    if total_pages > 1:
+        lines.append("")
+        lines.append(f"الصفحة {page} من {total_pages}")
+    return "\n".join(lines)
+
+
+def file_saved_text(record: StoredFile) -> str:
+    return (
+        "✅ <b>تم حفظ الملف</b>\n\n"
+        f"الاسم: {_escape(record.file_name)}\n"
+        f"الفئة: {category_label(record.category)}\n"
+        f"الحجم: {_escape(record.size_human)}"
+    )
+
+
+def file_text(record: StoredFile) -> str:
+    return (
+        f"📄 <b>{_escape(record.file_name)}</b>\n\n"
+        f"الفئة: {category_label(record.category)}\n"
+        f"الحجم: {_escape(record.size_human)}\n"
+        f"تاريخ الحفظ: {_escape(record.created_human)}"
+    )
+
+
+def file_caption(record: StoredFile) -> str:
+    return f"{_escape(record.file_name)} — {_escape(record.size_human)}"
+
+
+def file_sent_text(record: StoredFile) -> str:
+    return f"✅ تم إرسال «{_escape(record.file_name)}» إلى المحادثة."
 
 
 def deletion_text(record: StoredFile) -> str:
     return (
-        f"🗑 <b>حذف الملف</b>\n\n"
-        f"اسم الملف: {record.file_name}\n"
-        f"الحجم: {record.size_bytes} بايت\n\n"
-        "هل أنت متأكد من الحذف؟"
+        "🗑 <b>حذف الملف</b>\n\n"
+        f"الاسم: {_escape(record.file_name)}\n"
+        f"الحجم: {_escape(record.size_human)}\n\n"
+        "هل أنت متأكد من الحذف؟ لا يمكن التراجع."
     )
-
-
-async def show(
-    bot: Bot,
-    chat_id: int,
-    message_id: int,
-    text: str,
-    reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
-    try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup,
-        )
-    except TelegramAPIError:
-        pass

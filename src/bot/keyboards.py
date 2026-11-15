@@ -1,131 +1,112 @@
-"""Keyboard builders for the bot."""
+"""Inline keyboard builders and callback-data factories."""
 
 from __future__ import annotations
 
-from aiogram import F, Router
-from aiogram.enums import ChatType
-from aiogram.filters import Command
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-)
+from collections.abc import Mapping, Sequence
+
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
 from src.db.models import StoredFile
+from src.utils.filetypes import FileCategory
+from src.utils.formatters import format_number
 
-router = Router(name="keyboards")
-
-
-@router.callback_query(F.data == "main_menu")
-async def main_menu_callback(callback: CallbackQuery) -> None:
-    await callback.message.edit_text(
-        views.welcome_text(),
-        reply_markup=main_menu_kb(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "cancel")
-async def cancel_callback(callback: CallbackQuery) -> None:
-    await callback.message.edit_text(
-        "✅ تم الإلغاء.",
-        reply_markup=main_menu_kb(),
-    )
-    await callback.answer()
-
-
-BTN_CANCEL = "❌ إلغاء"
 BTN_LIBRARY = "📚 المكتبة"
 BTN_SEARCH = "🔍 بحث"
 BTN_STATS = "📊 إحصائيات"
 BTN_HELP = "❓ مساعدة"
+BTN_CANCEL = "❌ إلغاء"
+BTN_MAIN = "🔙 القائمة الرئيسية"
+
+_MAX_BUTTON_TEXT = 55
+
+
+class MenuCB(CallbackData, prefix="menu"):
+    action: str
+
+
+class CategoryCB(CallbackData, prefix="cat"):
+    name: str
+
+
+class FileCB(CallbackData, prefix="file"):
+    action: str
+    file_id: str
+
+
+class SearchCB(CallbackData, prefix="search"):
+    action: str
+    value: str = ""
+
+
+def _short(text: str, limit: int = _MAX_BUTTON_TEXT) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
+def _main_menu_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=BTN_MAIN, callback_data=MenuCB(action="main").pack()
+    )
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=BTN_LIBRARY, callback_data="menu_categories"),
-        InlineKeyboardButton(text=BTN_SEARCH, callback_data="menu_search"),
-        InlineKeyboardButton(text=BTN_STATS, callback_data="menu_stats"),
-        InlineKeyboardButton(text=BTN_HELP, callback_data="menu_help"),
-    )
-    builder.row(InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_back"))
-    return builder.as_markup()
-
-
-def main_reply_kb() -> ReplyKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text=BTN_LIBRARY, callback_data="menu_categories"),
-        InlineKeyboardButton(text=BTN_SEARCH, callback_data="menu_search"),
+        InlineKeyboardButton(
+            text=BTN_LIBRARY, callback_data=MenuCB(action="categories").pack()
+        ),
+        InlineKeyboardButton(
+            text=BTN_SEARCH, callback_data=MenuCB(action="search").pack()
+        ),
     )
     builder.row(
-        InlineKeyboardButton(text=BTN_STATS, callback_data="menu_stats"),
-        InlineKeyboardButton(text=BTN_HELP, callback_data="menu_help"),
+        InlineKeyboardButton(
+            text=BTN_STATS, callback_data=MenuCB(action="stats").pack()
+        ),
+        InlineKeyboardButton(
+            text=BTN_HELP, callback_data=MenuCB(action="help").pack()
+        ),
     )
-    builder.row(InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_back"))
     return builder.as_markup()
 
 
 def back_to_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"))
+    builder.row(_main_menu_button())
     return builder.as_markup()
 
 
-MenuCB = CallbackQuery
-
-
-def categories_kb(counts: dict[str, int]) -> InlineKeyboardMarkup:
+def categories_kb(counts: Mapping[FileCategory, int]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for category, count in counts.items():
         builder.button(
-            text=f"{category.capitalize()} ({count})",
-            callback_data=f"category_{category}",
+            text=f"{views.category_label(category)} ({format_number(count)})",
+            callback_data=CategoryCB(name=category.value).pack(),
         )
-    builder.row(InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"))
+    builder.adjust(2)
+    builder.row(_main_menu_button())
     return builder.as_markup()
 
 
-def category_files_kb(files: list[StoredFile], category: str) -> InlineKeyboardMarkup:
+def category_files_kb(
+    files: Sequence[StoredFile], category: FileCategory | str
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
         builder.button(
-            text=file.file_name,
-            callback_data=f"file_{file.id}",
+            text=_short(file.file_name),
+            callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
+    builder.adjust(1)
     builder.row(
-        InlineKeyboardButton(text="🔙 رجوع للفئات", callback_data="menu_categories"),
-        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
-    )
-    return builder.as_markup()
-
-
-FileCB = CallbackQuery
-CategoryCB = CallbackQuery
-SearchPageCB = CallbackQuery
-SearchFilterCB = CallbackQuery
-
-
-def search_list_kb(results: list[StoredFile], page: int, total_pages: int) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for file in results:
-        builder.button(
-            text=file.file_name,
-            callback_data=f"file_{file.id}",
-        )
-    builder.row(
-        InlineKeyboardButton(text="◀ السابق", callback_data=f"search_page_{page-1}"),
-        InlineKeyboardButton(text="التالي ▶", callback_data=f"search_page_{page+1}"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
-        InlineKeyboardButton(text="🔍 بحث جديد", callback_data="menu_search"),
+        InlineKeyboardButton(
+            text="🔙 رجوع للفئات",
+            callback_data=MenuCB(action="categories").pack(),
+        ),
+        _main_menu_button(),
     )
     return builder.as_markup()
 
@@ -133,61 +114,78 @@ def search_list_kb(results: list[StoredFile], page: int, total_pages: int) -> In
 def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📤 إرسال", callback_data=f"file_send_{file_id}"),
-        InlineKeyboardButton(text="🗑 حذف", callback_data=f"file_delete_{file_id}"),
+        InlineKeyboardButton(
+            text="📤 إرسال",
+            callback_data=FileCB(action="send", file_id=file_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text="🗑 حذف",
+            callback_data=FileCB(action="delete", file_id=file_id).pack(),
+        ),
     )
-    builder.row(
-        InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="menu_main"),
-    )
+    builder.row(_main_menu_button())
     return builder.as_markup()
 
 
 def delete_confirm_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="✅ نعم، احذف", callback_data=f"file_delete_confirm_{file_id}"),
-        InlineKeyboardButton(text="❌ إلغاء", callback_data="menu_main"),
+        InlineKeyboardButton(
+            text="✅ نعم، احذف",
+            callback_data=FileCB(action="confirm", file_id=file_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=BTN_CANCEL, callback_data=MenuCB(action="main").pack()
+        ),
     )
     return builder.as_markup()
 
 
-def cancel_reply_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[ReplyKeyboardButton(text=BTN_CANCEL)]],
-        resize_keyboard=True,
-        one_time_keyboard=True,
+def search_list_kb(
+    results: Sequence[StoredFile],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for file in results:
+        builder.button(
+            text=_short(file.file_name),
+            callback_data=FileCB(action="view", file_id=file.id).pack(),
+        )
+    builder.adjust(1)
+
+    navigation: list[InlineKeyboardButton] = []
+    if page > 1:
+        navigation.append(
+            InlineKeyboardButton(
+                text="◀ السابق",
+                callback_data=SearchCB(action="page", value=str(page - 1)).pack(),
+            )
+        )
+    if page < total_pages:
+        navigation.append(
+            InlineKeyboardButton(
+                text="التالي ▶",
+                callback_data=SearchCB(action="page", value=str(page + 1)).pack(),
+            )
+        )
+    if navigation:
+        builder.row(*navigation)
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🔍 بحث جديد", callback_data=MenuCB(action="search").pack()
+        ),
+        _main_menu_button(),
     )
+    return builder.as_markup()
 
 
-@router.message(Command("cancel"))
-async def cancel_command(message: Message) -> None:
-    await message.answer("✅ تم الإلغاء.", reply_markup=main_menu_kb())
-
-
-@router.message(Command("start"))
-async def start_command(message: Message) -> None:
-    await message.answer(views.welcome_text(), reply_markup=main_menu_kb())
-
-
-@router.message(Command("help"))
-@router.message(F.text == BTN_HELP)
-async def help_command(message: Message) -> None:
-    await message.answer(views.help_text(), reply_markup=main_menu_kb())
-
-
-@router.message(Command("library"))
-@router.message(F.text == BTN_LIBRARY)
-async def library_command(message: Message) -> None:
-    await message.answer("📚 المكتبة قيد التطوير.", reply_markup=main_menu_kb())
-
-
-@router.message(Command("search"))
-@router.message(F.text == BTN_SEARCH)
-async def search_command(message: Message) -> None:
-    await message.answer("🔍 اكتب اسم الملف للبحث.", reply_markup=cancel_reply_kb())
-
-
-@router.message(Command("stats"))
-@router.message(F.text == BTN_STATS)
-async def stats_command(message: Message) -> None:
-    await message.answer("📊 إحصائيات المكتبة قيد التطوير.", reply_markup=main_menu_kb())
+def search_prompt_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_CANCEL, callback_data=MenuCB(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
