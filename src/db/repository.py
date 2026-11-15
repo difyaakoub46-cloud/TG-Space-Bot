@@ -283,7 +283,7 @@ class FileRepository:
             "GET",
             path="folders",
             params={
-                "select": "id,name",
+                "select": "id,name,is_favorite",
                 "user_id": f"eq.{user_id}",
                 "order": "name.asc",
             },
@@ -292,7 +292,11 @@ class FileRepository:
         # order Arabic and Latin names the way the user expects.
         folders = sorted(
             (
-                Folder(id=str(row["id"]), name=str(row["name"]))
+                Folder(
+                    id=str(row["id"]),
+                    name=str(row["name"]),
+                    favorite=bool(row.get("is_favorite")),
+                )
                 for row in self._rows(response)
             ),
             key=lambda folder: (folder.name.casefold(), folder.name),
@@ -308,6 +312,7 @@ class FileRepository:
                 name=folder.name,
                 count=totals.get(folder.id, (0, 0))[0],
                 bytes=totals.get(folder.id, (0, 0))[1],
+                favorite=folder.favorite,
             )
             for folder in folders
         ]
@@ -365,7 +370,7 @@ class FileRepository:
             "GET",
             path="folders",
             params={
-                "select": "id,name",
+                "select": "id,name,is_favorite",
                 "id": f"eq.{folder_id}",
                 "user_id": f"eq.{user_id}",
                 "limit": "1",
@@ -374,10 +379,32 @@ class FileRepository:
         rows = self._rows(response)
         if not rows:
             return None
-        folder = Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
+        folder = Folder(
+            id=str(rows[0]["id"]),
+            name=str(rows[0]["name"]),
+            favorite=bool(rows[0].get("is_favorite")),
+        )
         totals = await self._folder_totals(f"eq.{folder.id}")
         count, size = totals.get(folder.id, (0, 0))
-        return Folder(id=folder.id, name=folder.name, count=count, bytes=size)
+        return Folder(
+            id=folder.id,
+            name=folder.name,
+            count=count,
+            bytes=size,
+            favorite=folder.favorite,
+        )
+
+    async def set_folder_favorite(
+        self, folder_id: str, user_id: int, favorite: bool
+    ) -> None:
+        """Star or unstar a folder; the name and the files are untouched."""
+        await self._request(
+            "PATCH",
+            path="folders",
+            params={"id": f"eq.{folder_id}", "user_id": f"eq.{user_id}"},
+            json={"is_favorite": favorite},
+            prefer="return=minimal",
+        )
 
     async def delete_folder(self, folder_id: str, user_id: int) -> bool:
         """Delete the folder row only; the files themselves are never touched.
