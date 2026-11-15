@@ -8,7 +8,7 @@ from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
-from src.bot.middlewares import ContextMiddleware
+from src.bot.middlewares import AccessMiddleware, ContextMiddleware
 from src.bot.routers import browse, commands, fallback, search, upload
 from src.services.container import Services
 
@@ -41,7 +41,11 @@ async def on_error(event: ErrorEvent) -> None:
 def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
 
+    access = AccessMiddleware(services)
     middleware = ContextMiddleware(services)
+    # Order matters: the allow-list runs before anything else touches the update.
+    dispatcher.message.outer_middleware(access)
+    dispatcher.callback_query.outer_middleware(access)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
 

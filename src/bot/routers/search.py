@@ -21,11 +21,13 @@ from src.services.container import Services
 
 router = Router(name="search")
 
-PER_PAGE = 10
+
+def _per_page(services: Services) -> int:
+    return services.settings.results_per_page()
 
 
-def _total_pages(total: int) -> int:
-    return max(1, -(-total // PER_PAGE))
+def _total_pages(total: int, per_page: int) -> int:
+    return max(1, -(-total // per_page))
 
 
 async def _show_results(
@@ -38,10 +40,11 @@ async def _show_results(
     query = str(data.get("search_query") or "")
 
     results = await services.files.search(query)
-    pages = _total_pages(len(results))
+    per_page = _per_page(services)
+    pages = _total_pages(len(results), per_page)
     page = max(1, min(page, pages))
-    start = (page - 1) * PER_PAGE
-    page_items = results[start : start + PER_PAGE]
+    start = (page - 1) * per_page
+    page_items = results[start : start + per_page]
 
     await views.set_screen_cb(
         callback,
@@ -87,8 +90,9 @@ async def search_query_message(
     await state.update_data(search_query=query)
 
     results = await services.files.search(query)
-    pages = _total_pages(len(results))
-    page_items = results[:PER_PAGE]
+    per_page = _per_page(services)
+    pages = _total_pages(len(results), per_page)
+    page_items = results[:per_page]
 
     await views.set_screen(
         bot,
