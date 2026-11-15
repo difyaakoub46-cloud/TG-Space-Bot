@@ -125,6 +125,16 @@ class FileStorageServices:
     async def folder(self, folder_id: str, user_id: int) -> Folder | None:
         return await self._repository.get_folder(folder_id, user_id)
 
+    async def favorite_folders(self, user_id: int) -> list[Folder]:
+        """The shortcuts of the library screen, in the same alphabetical order."""
+        return [folder for folder in await self.folders(user_id) if folder.favorite]
+
+    async def set_favorite(
+        self, folder_id: str, user_id: int, favorite: bool
+    ) -> Folder | None:
+        await self._repository.set_folder_favorite(folder_id, user_id, favorite)
+        return await self._repository.get_folder(folder_id, user_id)
+
     async def create_folder(self, user_id: int, name: str) -> Folder:
         return await self._repository.create_folder(user_id, name)
 
