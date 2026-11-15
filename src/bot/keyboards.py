@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
-from src.db.models import StoredFile
+from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 
@@ -20,6 +20,8 @@ BTN_HELP = "❓ مساعدة"
 BTN_CANCEL = "❌ إلغاء"
 BTN_MAIN = "🔙 القائمة الرئيسية"
 BTN_BACK = "↩️ رجوع"
+BTN_FOLDERS = "📁 المجلدات"
+BTN_NEW_FOLDER = "➕ مجلد جديد"
 
 _MAX_BUTTON_TEXT = 55
 
@@ -38,6 +40,11 @@ class FileCB(CallbackData, prefix="file"):
 
 
 class SearchCB(CallbackData, prefix="search"):
+    action: str
+    value: str = ""
+
+
+class FolderCB(CallbackData, prefix="fld"):
     action: str
     value: str = ""
 
@@ -82,6 +89,12 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text=BTN_HELP, callback_data=MenuCB(action="help").pack()
         ),
+    )
+    # Second section: the virtual folders that group files of the library above.
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_FOLDERS, callback_data=MenuCB(action="folders").pack()
+        )
     )
     return builder.as_markup()
 
@@ -129,6 +142,62 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
             text="🗑 حذف",
             callback_data=FileCB(action="delete", file_id=file_id).pack(),
         ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="✏️ إعادة تسمية",
+            callback_data=FileCB(action="rename", file_id=file_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text="📁 إضافة إلى مجلد",
+            callback_data=FileCB(action="folder", file_id=file_id).pack(),
+        ),
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def folders_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for folder in folders:
+        builder.button(
+            text=f"📁 {_short(folder.name, 25)} ({format_number(folder.count)})",
+            callback_data=FolderCB(action="open", value=folder.id).pack(),
+        )
+    builder.adjust(2)
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
+        )
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def folder_files_kb(files: Sequence[StoredFile]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for file in files:
+        builder.button(
+            text=_short(file.file_name),
+            callback_data=FileCB(action="view", file_id=file.id).pack(),
+        )
+    builder.adjust(1)
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def pick_folder_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for folder in folders:
+        builder.button(
+            text=f"📁 {_short(folder.name, 25)}",
+            callback_data=FolderCB(action="put", value=folder.id).pack(),
+        )
+    builder.adjust(1)
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
+        )
     )
     builder.row(*nav_row())
     return builder.as_markup()
