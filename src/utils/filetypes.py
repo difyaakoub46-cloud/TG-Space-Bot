@@ -47,7 +47,6 @@ class FileCandidate:
     file_id: str = ""
     file_unique_id: str | None = None
     file_size: int = 0
-    thumbnail_file_id: str | None = None
 
 
 def classify(mime: str, name: str) -> FileCategory:
@@ -102,7 +101,6 @@ def extract_candidate(message: Message) -> FileCandidate | None:
     if document:
         name = document.file_name or "file"
         mime = document.mime_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
-        thumb = document.thumb
         return FileCandidate(
             file_name=name,
             mime_type=mime,
@@ -110,7 +108,6 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_id=document.file_id,
             file_unique_id=document.file_unique_id,
             file_size=document.file_size,
-            thumbnail_file_id=thumb.file_id if thumb else None,
         )
 
     if photo:
@@ -123,7 +120,6 @@ def extract_candidate(message: Message) -> FileCandidate | None:
             file_id=last.file_id,
             file_unique_id=last.file_unique_id,
             file_size=last.file_size,
-            thumbnail_file_id=last.file_id,
         )
 
     if video:
