@@ -15,7 +15,3 @@ class RenameStates(StatesGroup):
 
 class FolderStates(StatesGroup):
     waiting_name = State()
-
-
-class JoinStates(StatesGroup):
-    waiting_password = State()

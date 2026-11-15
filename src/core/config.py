@@ -92,16 +92,11 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Owner-only gate for the storage groups (see the access router).
+    # Optional extra id for the storage-group gate (see the access router); the
+    # gate itself is driven by ALLOWED_USER_IDS alone, with no password step.
     owner_id: OptionalChatId = Field(
         None,
         validation_alias=AliasChoices("OWNER_ID", "OWNER_TELEGRAM_ID", "TG_OWNER_ID"),
-    )
-    join_password: Annotated[SecretStr | None, BeforeValidator(_blank_to_none)] = Field(
-        None,
-        validation_alias=AliasChoices(
-            "JOIN_PASSWORD", "GROUP_JOIN_PASSWORD", "ACCESS_PASSWORD"
-        ),
     )
 
     request_timeout: float = 30.0
