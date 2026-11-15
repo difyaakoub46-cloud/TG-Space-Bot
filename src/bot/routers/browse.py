@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 
 from aiogram import F, Router
@@ -18,6 +19,7 @@ from src.bot.keyboards import (
     MenuCB,
     delete_confirm_kb,
 )
+from src.bot.states import RenameStates
 from src.services.container import Services
 from src.utils.filetypes import parse_category
 
@@ -109,6 +111,79 @@ async def file_send_callback(
         {"k": "file", "id": record.id},
         notice=views.file_sent_text(record),
         push=False,
+    )
+
+
+@router.callback_query(FileCB.filter(F.action == "rename"))
+async def file_rename_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    data = FileCB.unpack(callback.data)
+    record = await services.files.get(data.file_id)
+    if record is None:
+        await callback.answer("الملف غير موجود.", show_alert=True)
+        return
+    await state.set_state(RenameStates.waiting_name)
+    await state.update_data(rename_file_id=record.id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "file", "id": record.id},
+        notice=views.rename_prompt_text(record),
+        push=False,
+    )
+
+
+@router.message(RenameStates.waiting_name)
+async def rename_message(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    name = " ".join((message.text or "").split())
+    await views.remember(state, message.message_id)
+    if not name or len(name) > 120:
+        await message.answer("⚠️ أرسل اسماً بين حرف واحد و١٢٠ حرفاً.")
+        return
+
+    stored = await state.get_data()
+    file_id = str(stored.get("rename_file_id") or "")
+    await state.set_state(None)
+    updated = await services.files.rename(file_id, name) if file_id else None
+    if updated is None:
+        await message.answer("⚠️ تعذّر تحديث الاسم، حاول مرة أخرى.")
+        return
+
+    await navigation.navigate_message(
+        message,
+        state,
+        bot,
+        services,
+        {"k": "file", "id": updated.id},
+        notice=f"✅ تم تغيير الاسم إلى «{html.escape(updated.file_name, quote=False)}».",
+    )
+
+
+@router.callback_query(FileCB.filter(F.action == "folder"))
+async def file_folder_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    data = FileCB.unpack(callback.data)
+    record = await services.files.get(data.file_id)
+    if record is None:
+        await callback.answer("الملف غير موجود.", show_alert=True)
+        return
+    await state.update_data(folder_file_id=record.id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {
+            "k": "pick_folder",
+            "u": int(callback.from_user.id),
+            "file": record.id,
+        },
     )
 
 
