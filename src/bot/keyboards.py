@@ -105,14 +105,36 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def categories_kb(counts: Mapping[FileCategory, int]) -> InlineKeyboardMarkup:
+def categories_kb(
+    totals: Mapping[FileCategory, tuple[int, int]],
+    folders: Sequence[Folder] = (),
+) -> InlineKeyboardMarkup:
+    """Library keyboard: the categories, then the virtual folders section."""
     builder = InlineKeyboardBuilder()
-    for category, count in counts.items():
+    for category, (count, _size) in totals.items():
         builder.button(
             text=f"{views.category_label(category)} ({format_number(count)})",
             callback_data=CategoryCB(name=category.value).pack(),
         )
     builder.adjust(2)
+
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_FOLDERS, callback_data=MenuCB(action="folders").pack()
+        )
+    )
+    for folder in folders:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📁 {_short(folder.name, 25)} ({format_number(folder.count)})",
+                callback_data=FolderCB(action="open", value=folder.id).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
+        )
+    )
     builder.row(*nav_row())
     return builder.as_markup()
 
