@@ -45,13 +45,18 @@ async def build(
     kind = screen.get("k")
 
     if kind == "categories":
-        counts = await services.files.category_counts()
-        return views.categories_text(counts), categories_kb(counts)
+        totals = await services.files.category_totals()
+        folders = await services.files.folders(int(screen.get("u") or 0))
+        return views.categories_text(totals, folders), categories_kb(totals, folders)
 
     if kind == "category":
         category = parse_category(str(screen.get("name") or ""))
+        totals = await services.files.category_totals()
         files = await services.files.by_category(category)
-        return views.category_text(category, files), category_files_kb(files, category)
+        return (
+            views.category_text(category, files, totals.get(category)),
+            category_files_kb(files, category),
+        )
 
     if kind == "file":
         record = await services.files.get(str(screen.get("id") or ""))
@@ -105,7 +110,14 @@ async def build(
     if kind == "help":
         return views.help_text(), back_to_menu_kb()
 
-    return views.welcome_text(), main_menu_kb()
+    # The main menu (and any screen that no longer exists) shows the library total.
+    stats = await services.files.stats()
+    return (
+        views.welcome_text(
+            int(stats.get("total", 0)), int(stats.get("total_bytes", 0) or 0)
+        ),
+        main_menu_kb(),
+    )
 
 
 async def _push_current(state: FSMContext) -> None:
