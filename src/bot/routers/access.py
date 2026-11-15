@@ -1,36 +1,33 @@
 """Owner-only gate: one-time invites to the storage groups, admin on join.
 
-Two independent checks guard the gate: the Telegram id must be the owner id from
-the environment, *and* the password must match. A failure in either check refuses
-the request immediately.
+The gate asks for nothing: pressing the button checks the caller's Telegram id
+against ``ALLOWED_USER_IDS`` (and the optional ``OWNER_ID``) silently, and only a
+listed account ever gets to see the group buttons. Every refusal happens before
+any invite link exists.
 """
 
 from __future__ import annotations
 
-import hmac
 import logging
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated
 
 from src.bot import navigation, views
 from src.bot.keyboards import JoinCB, MenuCB
-from src.bot.states import JoinStates
 from src.core.config import ConfigurationError
 from src.services.container import Services
 from src.utils.filetypes import parse_category
-from src.utils.telegram import safe_delete_message
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="access")
 
 DENIED_TEXT = "⛔ هذا الأمر مقصور على المالك."
-WRONG_PASSWORD_TEXT = "❌ كلمة السر غير صحيحة. تم رفض الطلب."
-NO_PASSWORD_TEXT = "⚠️ ميزة الانضمام غير مهيّأة: أضف المتغير JOIN_PASSWORD في الخادم."
+NOT_CONFIGURED_TEXT = "⚠️ ميزة الانضمام غير مهيّأة: أضف معرّفك في المتغير ALLOWED_USER_IDS."
 
 # The owner joins as a plain member, so the bot must hand out the rights itself.
 # can_promote_members is deliberately left off: granting it needs the bot itself to
@@ -46,17 +43,19 @@ OWNER_RIGHTS: dict[str, bool] = {
 }
 
 
-def _is_owner(services: Services, user_id: int | None) -> bool:
+def _allowed_ids(services: Services) -> frozenset[int]:
+    """The Telegram ids that may use the gate: ALLOWED_USER_IDS plus the owner."""
+    ids = set(services.settings.allowed_users())
     owner = services.settings.owner_id
-    if owner is None or user_id is None:
+    if owner is not None:
+        ids.add(int(owner))
+    return frozenset(ids)
+
+
+def _is_allowed(services: Services, user_id: int | None) -> bool:
+    if user_id is None:
         return False
-    return int(user_id) == int(owner)
-
-
-def _password(services: Services) -> str:
-    """The configured gate password, or an empty string when it is not set."""
-    secret = services.settings.join_password
-    return secret.get_secret_value() if secret is not None else ""
+    return int(user_id) in _allowed_ids(services)
 
 
 def _reason(exc: BaseException) -> str:
@@ -68,49 +67,25 @@ def _reason(exc: BaseException) -> str:
 async def menu_join_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    if not _is_owner(services, callback.from_user.id):
-        await callback.answer(DENIED_TEXT, show_alert=True)
+    """Open the group picker for a listed account, silently refuse everybody else."""
+    if not _allowed_ids(services):
+        await callback.answer(NOT_CONFIGURED_TEXT, show_alert=True)
         return
-    if not _password(services):
-        await callback.answer(NO_PASSWORD_TEXT, show_alert=True)
+    if not _is_allowed(services, callback.from_user.id):
+        logger.warning(
+            "Ignored a join request from unlisted user %s", callback.from_user.id
+        )
+        await callback.answer(DENIED_TEXT, show_alert=True)
         return
 
     await views.reset_flow(state)
-    await state.set_state(JoinStates.waiting_password)
     await navigation.navigate_callback(
         callback,
         state,
         bot,
         services,
-        {"k": "join_password"},
+        {"k": "join_groups"},
         push=False,
-    )
-
-
-@router.message(JoinStates.waiting_password)
-async def join_password_message(
-    message: Message, services: Services, state: FSMContext, bot
-) -> None:
-    # The password must not stay in the chat, whatever the outcome.
-    await safe_delete_message(bot, message.chat.id, message.message_id)
-    await state.set_state(None)
-
-    if not _is_owner(services, message.from_user.id if message.from_user else None):
-        await message.answer(DENIED_TEXT)
-        return
-
-    expected = _password(services)
-    given = (message.text or "").strip()
-    if not expected:
-        await message.answer(NO_PASSWORD_TEXT)
-        return
-    if not given or not hmac.compare_digest(given, expected):
-        logger.warning("Rejected a join attempt with a wrong password")
-        await message.answer(WRONG_PASSWORD_TEXT)
-        return
-
-    await navigation.navigate_message(
-        message, state, bot, services, {"k": "join_groups"}
     )
 
 
@@ -118,11 +93,14 @@ async def join_password_message(
 async def join_link_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    if not _is_owner(services, callback.from_user.id):
-        await callback.answer(DENIED_TEXT, show_alert=True)
+    if not _allowed_ids(services):
+        await callback.answer(NOT_CONFIGURED_TEXT, show_alert=True)
         return
-    if not _password(services):
-        await callback.answer(NO_PASSWORD_TEXT, show_alert=True)
+    if not _is_allowed(services, callback.from_user.id):
+        logger.warning(
+            "Ignored an invite request from unlisted user %s", callback.from_user.id
+        )
+        await callback.answer(DENIED_TEXT, show_alert=True)
         return
 
     data = JoinCB.unpack(callback.data)
@@ -157,9 +135,7 @@ async def join_link_callback(
         bot,
         services,
         {"k": "join_groups"},
-        notice=views.invite_text(
-            link.invite_link, views.category_label(category)
-        ),
+        notice=views.invite_text(link.invite_link, views.category_label(category)),
         push=False,
     )
 
@@ -168,13 +144,11 @@ async def join_link_callback(
 async def on_chat_member(
     update: ChatMemberUpdated, services: Services, bot: Bot
 ) -> None:
-    """Promote the owner the moment they join a storage group."""
-    owner = services.settings.owner_id
-    if owner is None:
+    """Promote a listed account the moment it joins a storage group."""
+    user_id = int(update.new_chat_member.user.id)
+    if not _is_allowed(services, user_id):
         return
     if update.chat.id not in set(services.settings.storage_chats().values()):
-        return
-    if int(update.new_chat_member.user.id) != int(owner):
         return
 
     status = update.new_chat_member.status
@@ -183,22 +157,22 @@ async def on_chat_member(
 
     try:
         promoted = await bot.promote_chat_member(
-            chat_id=update.chat.id, user_id=owner, **OWNER_RIGHTS
+            chat_id=update.chat.id, user_id=user_id, **OWNER_RIGHTS
         )
     except TelegramAPIError:
-        logger.exception("Could not promote the owner in %s", update.chat.id)
+        logger.exception("Could not promote %s in %s", user_id, update.chat.id)
         return
 
     if not promoted:
-        logger.warning("Telegram refused to promote the owner in %s", update.chat.id)
+        logger.warning("Telegram refused to promote %s in %s", user_id, update.chat.id)
         return
 
-    logger.info("Promoted the owner in %s", update.chat.id)
+    logger.info("Promoted %s in %s", user_id, update.chat.id)
     title = update.chat.title or str(update.chat.id)
     try:
         await bot.send_message(
-            owner,
+            user_id,
             f"✅ تمت ترقيتك إلى مشرف في مجموعة «{title}» تلقائياً.",
         )
     except TelegramAPIError:
-        logger.debug("Could not notify the owner about the promotion", exc_info=True)
+        logger.debug("Could not notify the promoted user", exc_info=True)

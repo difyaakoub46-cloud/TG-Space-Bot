@@ -112,9 +112,6 @@ async def build(
     if kind == "help":
         return views.help_text(), help_kb()
 
-    if kind == "join_password":
-        return views.join_prompt_text(), back_to_menu_kb()
-
     if kind == "join_groups":
         groups = sorted(
             services.settings.storage_chats().items(), key=lambda item: item[0].value
