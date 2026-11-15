@@ -9,7 +9,15 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
 from src.bot.middlewares import AccessMiddleware, ContextMiddleware
-from src.bot.routers import browse, commands, fallback, folders, search, upload
+from src.bot.routers import (
+    access,
+    browse,
+    commands,
+    fallback,
+    folders,
+    search,
+    upload,
+)
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
@@ -48,6 +56,8 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher.callback_query.outer_middleware(access)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
+    # Member updates only need the services: the owner check happens in the handler.
+    dispatcher.chat_member.outer_middleware(middleware)
 
     # Order matters: commands first, the catch-all fallback last.
     dispatcher.include_routers(
@@ -56,6 +66,7 @@ def build_dispatcher(services: Services) -> Dispatcher:
         search.router,
         browse.router,
         folders.router,
+        access_gate.router,
         fallback.router,
     )
 
