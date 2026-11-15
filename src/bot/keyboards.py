@@ -19,6 +19,7 @@ BTN_STATS = "📊 إحصائيات"
 BTN_HELP = "❓ مساعدة"
 BTN_CANCEL = "❌ إلغاء"
 BTN_MAIN = "🔙 القائمة الرئيسية"
+BTN_BACK = "↩️ رجوع"
 
 _MAX_BUTTON_TEXT = 55
 
@@ -52,6 +53,18 @@ def _main_menu_button() -> InlineKeyboardButton:
     )
 
 
+def _back_button() -> InlineKeyboardButton:
+    """Go back one screen; unlike the main menu it deletes nothing."""
+    return InlineKeyboardButton(
+        text=BTN_BACK, callback_data=MenuCB(action="back").pack()
+    )
+
+
+def nav_row() -> tuple[InlineKeyboardButton, InlineKeyboardButton]:
+    """The shared [رجوع] [القائمة الرئيسية] row."""
+    return _back_button(), _main_menu_button()
+
+
 def main_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -75,7 +88,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 
 def back_to_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(_main_menu_button())
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -87,7 +100,7 @@ def categories_kb(counts: Mapping[FileCategory, int]) -> InlineKeyboardMarkup:
             callback_data=CategoryCB(name=category.value).pack(),
         )
     builder.adjust(2)
-    builder.row(_main_menu_button())
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -101,13 +114,7 @@ def category_files_kb(
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
-    builder.row(
-        InlineKeyboardButton(
-            text="🔙 رجوع للفئات",
-            callback_data=MenuCB(action="categories").pack(),
-        ),
-        _main_menu_button(),
-    )
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -123,7 +130,7 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
             callback_data=FileCB(action="delete", file_id=file_id).pack(),
         ),
     )
-    builder.row(_main_menu_button())
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -175,9 +182,9 @@ def search_list_kb(
     builder.row(
         InlineKeyboardButton(
             text="🔍 بحث جديد", callback_data=MenuCB(action="search").pack()
-        ),
-        _main_menu_button(),
+        )
     )
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -188,4 +195,5 @@ def search_prompt_kb() -> InlineKeyboardMarkup:
             text=BTN_CANCEL, callback_data=MenuCB(action="cancel").pack()
         )
     )
+    builder.row(*nav_row())
     return builder.as_markup()
