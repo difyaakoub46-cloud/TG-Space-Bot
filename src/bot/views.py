@@ -14,7 +14,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number, human_size
+from src.utils.formatters import format_number, human_size, human_total
 
 _NOT_MODIFIED = "message is not modified"
 _MAX_TRACKED_MESSAGES = 100
@@ -232,15 +232,22 @@ async def set_screen_cb(
 # --------------------------------------------------------------------------- #
 # Text builders
 # --------------------------------------------------------------------------- #
-def welcome_text() -> str:
-    return (
-        "👋 مرحباً بك في TG-Space-Bot\n\n"
-        "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة تلقائياً.\n"
-        "أرسل أي ملف الآن، أو تنقّل عبر الأزرار أدناه.\n\n"
-        "📚 المكتبة — تصفح الملفات حسب الفئة\n"
-        "🔍 بحث — البحث بالاسم داخل المكتبة\n"
-        "📊 إحصائيات — عدد الملفات والحجم الإجمالي\n"
-        "📁 المجلدات — مجموعات افتراضية للتنظيم السريع"
+def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
+    return "\n".join(
+        [
+            "👋 مرحباً بك في TG-Space-Bot",
+            "",
+            "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة تلقائياً.",
+            "أرسل أي ملف الآن، أو تنقّل عبر الأزرار أدناه.",
+            "",
+            f"🗂 <b>إجمالي المكتبة</b>: {format_number(total_files)} ملف · "
+            f"{_escape(human_total(total_bytes))}",
+            "",
+            "📚 المكتبة — تصفح الملفات حسب الفئة",
+            "🔍 بحث — البحث بالاسم داخل المكتبة",
+            "📊 إحصائيات — عدد الملفات والحجم الإجمالي",
+            "📁 المجلدات — مجموعات افتراضية للتنظيم السريع",
+        ]
     )
 
 
@@ -276,19 +283,64 @@ def stats_text(stats: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def categories_text(counts: Mapping[FileCategory | str, int]) -> str:
-    lines = ["📚 <b>المكتبة</b>", "", "اختر فئة لعرض ملفاتها:"]
-    if not counts:
-        lines.append("لا توجد ملفات محفوظة بعد.")
+def categories_text(
+    totals: Mapping[FileCategory, tuple[int, int]],
+    folders: Sequence[Folder] = (),
+) -> str:
+    """The library: every category with its count and total size, plus folders.
+
+    The folders are listed here (not only in their own screen) so the library is the
+    single place that shows everything the user has organised.
+    """
+    total_files = sum(count for count, _size in totals.values())
+    total_bytes = sum(size for _count, size in totals.values())
+
+    lines = [
+        "📚 <b>المكتبة</b>",
+        "",
+        f"الإجمالي: {format_number(total_files)} ملف · "
+        f"{_escape(human_total(total_bytes))}",
+        "",
+        "<b>الفئات</b>",
+    ]
+    for category, (count, size) in totals.items():
+        lines.append(
+            f"{category_label(category)} — {format_number(count)} ملف · "
+            f"{_escape(human_total(size))}"
+        )
+
+    lines.append("")
+    lines.append("<b>📁 المجلدات</b>")
+    if folders:
+        for folder in folders:
+            lines.append(
+                f"📁 {_escape(folder.name)} — {format_number(folder.count)} ملف · "
+                f"{_escape(human_total(folder.bytes))}"
+            )
+    else:
+        lines.append("لا توجد مجلدات بعد — أنشئ واحداً بـ«➕ مجلد جديد».")
     return "\n".join(lines)
 
 
-def category_text(category: FileCategory | str, files: Sequence[StoredFile]) -> str:
+def category_text(
+    category: FileCategory | str,
+    files: Sequence[StoredFile],
+    totals: tuple[int, int] | None = None,
+) -> str:
+    """One category: its file count and total size, then the files themselves."""
     label = category_label(category)
-    lines = [f"{label} — <b>{format_number(len(files))}</b> ملف", ""]
+    count, size = (
+        totals
+        if totals is not None
+        else (len(files), sum(file.size_bytes for file in files))
+    )
+    lines = [
+        f"{label} — {format_number(count)} ملف · {_escape(human_total(size))}",
+        "",
+    ]
     if not files:
         lines.append("لا توجد ملفات في هذه الفئة.")
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
 def search_prompt_text() -> str:
@@ -354,14 +406,24 @@ def folders_text(folders: Sequence[Folder]) -> str:
     ]
     if folders:
         lines.append("اختر مجلداً لعرض ملفاته:")
+        lines.append("")
+        for folder in folders:
+            lines.append(
+                f"📁 <b>{_escape(folder.name)}</b> — "
+                f"{format_number(folder.count)} ملف · "
+                f"{_escape(human_total(folder.bytes))}"
+            )
     else:
-        lines.append("لا توجد مجلدات بعد. أنشئ أول مجلد بـ«➕ مجلد جديد». ")
+        lines.append("لا توجد مجلدات بعد. أنشئ أول مجلد بـ«➕ مجلد جديد».")
     return "\n".join(lines)
 
 
 def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
+    count = folder.count or len(files)
+    size = folder.bytes or sum(file.size_bytes for file in files)
     lines = [
-        f"📁 <b>{_escape(folder.name)}</b> — {format_number(len(files))} ملف",
+        f"📁 <b>{_escape(folder.name)}</b> — {format_number(count)} ملف · "
+        f"{_escape(human_total(size))}",
         "",
     ]
     if files:
