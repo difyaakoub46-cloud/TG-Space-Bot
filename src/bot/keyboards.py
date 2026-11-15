@@ -138,9 +138,9 @@ def groups_kb(groups: Sequence[tuple[FileCategory, int]]) -> InlineKeyboardMarku
 
 def categories_kb(
     totals: Mapping[FileCategory, tuple[int, int]],
-    folders: Sequence[Folder] = (),
+    folder_count: int = 0,
 ) -> InlineKeyboardMarkup:
-    """Library keyboard: the categories, then the virtual folders section."""
+    """Library keyboard: the categories, then one button to the folder screen."""
     builder = InlineKeyboardBuilder()
     for category, (count, _size) in totals.items():
         builder.button(
@@ -151,16 +151,14 @@ def categories_kb(
 
     builder.row(
         InlineKeyboardButton(
-            text=BTN_FOLDERS, callback_data=MenuCB(action="folders").pack()
+            text=(
+                f"{BTN_FOLDERS} ({format_number(folder_count)})"
+                if folder_count
+                else BTN_FOLDERS
+            ),
+            callback_data=MenuCB(action="folders").pack(),
         )
     )
-    for folder in folders:
-        builder.row(
-            InlineKeyboardButton(
-                text=f"📁 {_short(folder.name, 25)} ({format_number(folder.count)})",
-                callback_data=FolderCB(action="open", value=folder.id).pack(),
-            )
-        )
     builder.row(
         InlineKeyboardButton(
             text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
@@ -210,7 +208,10 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def folders_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
+def folders_kb(
+    folders: Sequence[Folder], page: int = 1, total_pages: int = 1
+) -> InlineKeyboardMarkup:
+    """One page of folders plus first/previous/next/last navigation."""
     builder = InlineKeyboardBuilder()
     for folder in folders:
         builder.button(
@@ -218,6 +219,46 @@ def folders_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
             callback_data=FolderCB(action="open", value=folder.id).pack(),
         )
     builder.adjust(2)
+
+    if total_pages > 1:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"صفحة {page} من {total_pages}",
+                callback_data=FolderCB(action="noop").pack(),
+            )
+        )
+        controls: list[InlineKeyboardButton] = []
+        if page > 1:
+            controls.append(
+                InlineKeyboardButton(
+                    text="⏮ الأولى",
+                    callback_data=FolderCB(action="page", value="1").pack(),
+                )
+            )
+            controls.append(
+                InlineKeyboardButton(
+                    text="◀ السابق",
+                    callback_data=FolderCB(action="page", value=str(page - 1)).pack(),
+                )
+            )
+        if page < total_pages:
+            controls.append(
+                InlineKeyboardButton(
+                    text="التالي ▶",
+                    callback_data=FolderCB(action="page", value=str(page + 1)).pack(),
+                )
+            )
+            controls.append(
+                InlineKeyboardButton(
+                    text="الأخيرة ⏭",
+                    callback_data=FolderCB(
+                        action="page", value=str(total_pages)
+                    ).pack(),
+                )
+            )
+        if controls:
+            builder.row(*controls)
+
     builder.row(
         InlineKeyboardButton(
             text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
@@ -227,7 +268,9 @@ def folders_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def folder_files_kb(files: Sequence[StoredFile]) -> InlineKeyboardMarkup:
+def folder_files_kb(
+    files: Sequence[StoredFile], folder_id: str | None = None
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
         builder.button(
@@ -235,7 +278,30 @@ def folder_files_kb(files: Sequence[StoredFile]) -> InlineKeyboardMarkup:
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
+    if folder_id:
+        builder.row(
+            InlineKeyboardButton(
+                text="🗑 حذف المجلد",
+                callback_data=FolderCB(action="delete", value=folder_id).pack(),
+            )
+        )
     builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def folder_delete_confirm_kb(folder_id: str) -> InlineKeyboardMarkup:
+    """Confirm the deletion of a folder, keeping every file inside it."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ نعم، احذف المجلد",
+            callback_data=FolderCB(action="confirm_delete", value=folder_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=BTN_CANCEL,
+            callback_data=FolderCB(action="open", value=folder_id).pack(),
+        ),
+    )
     return builder.as_markup()
 
 
