@@ -12,7 +12,7 @@ import httpx
 
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
-from src.utils.filetypes import FileCategory
+from src.utils.filetypes import FileCategory, parse_category
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,31 @@ class FileRepository:
         results = await asyncio.gather(*(self.count(category=cat) for cat in categories))
         return {cat: total for cat, total in zip(categories, results)}
 
+    async def category_totals(self) -> dict[FileCategory, tuple[int, int]]:
+        """Files and bytes per category, read from the ``files_by_category`` view."""
+        try:
+            response = await self._request(
+                "GET",
+                path="files_by_category",
+                params={"select": "category,files,bytes"},
+            )
+        except SupabaseError:
+            logger.warning(
+                "files_by_category is unavailable; falling back to counts only",
+                exc_info=True,
+            )
+            counts = await self.category_counts()
+            return {category: (total, 0) for category, total in counts.items()}
+
+        totals = {category: (0, 0) for category in FileCategory}
+        for row in self._rows(response):
+            category = parse_category(row.get("category"))
+            totals[category] = (
+                int(row.get("files") or 0),
+                int(row.get("bytes") or 0),
+            )
+        return totals
+
     async def delete(self, file_id: str) -> StoredFile | None:
         response = await self._request(
             "DELETE",
@@ -253,7 +278,7 @@ class FileRepository:
     # Virtual folders
     # ------------------------------------------------------------------ #
     async def list_folders(self, user_id: int) -> list[Folder]:
-        """Folders of one user, each with the number of files it links to."""
+        """Folders of one user, each with its file count and total size."""
         response = await self._request(
             "GET",
             path="folders",
@@ -271,16 +296,52 @@ class FileRepository:
             return []
 
         ids = ",".join(folder.id for folder in folders)
-        counts = await self._request(
-            "GET",
-            path="folder_files",
-            params={"select": "folder_id", "folder_id": f"in.({ids})"},
-        )
-        tally = Counter(str(row["folder_id"]) for row in self._rows(counts))
+        totals = await self._folder_totals(f"in.({ids})")
         return [
-            Folder(id=folder.id, name=folder.name, count=tally.get(folder.id, 0))
+            Folder(
+                id=folder.id,
+                name=folder.name,
+                count=totals.get(folder.id, (0, 0))[0],
+                bytes=totals.get(folder.id, (0, 0))[1],
+            )
             for folder in folders
         ]
+
+    async def _folder_totals(self, folder_filter: str) -> dict[str, tuple[int, int]]:
+        """Folder id -> (files, bytes), from the ``folder_totals`` view.
+
+        Falls back to counting the links when the view is not deployed yet, so an
+        older database still renders (without the byte totals).
+        """
+        try:
+            response = await self._request(
+                "GET",
+                path="folder_totals",
+                params={
+                    "select": "folder_id,files,bytes",
+                    "folder_id": folder_filter,
+                },
+            )
+        except SupabaseError:
+            logger.warning(
+                "folder_totals is unavailable; falling back to link counts",
+                exc_info=True,
+            )
+            links = await self._request(
+                "GET",
+                path="folder_files",
+                params={"select": "folder_id", "folder_id": folder_filter},
+            )
+            tally = Counter(str(row["folder_id"]) for row in self._rows(links))
+            return {folder_id: (count, 0) for folder_id, count in tally.items()}
+
+        return {
+            str(row["folder_id"]): (
+                int(row.get("files") or 0),
+                int(row.get("bytes") or 0),
+            )
+            for row in self._rows(response)
+        }
 
     async def create_folder(self, user_id: int, name: str) -> Folder:
         response = await self._request(
@@ -308,7 +369,10 @@ class FileRepository:
         rows = self._rows(response)
         if not rows:
             return None
-        return Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
+        folder = Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
+        totals = await self._folder_totals(f"eq.{folder.id}")
+        count, size = totals.get(folder.id, (0, 0))
+        return Folder(id=folder.id, name=folder.name, count=count, bytes=size)
 
     async def add_to_folder(self, folder_id: str, file_id: str) -> None:
         """Link a file to a folder (linking twice is a no-op)."""

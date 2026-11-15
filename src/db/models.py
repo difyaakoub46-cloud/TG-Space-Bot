@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from src.utils.filetypes import FileCategory, parse_category
-from src.utils.formatters import format_datetime, human_size
+from src.utils.formatters import format_datetime, human_size, human_total
 
 
 def _parse_datetime(value: Any) -> datetime:
@@ -27,6 +27,11 @@ class Folder:
     id: str
     name: str
     count: int = 0
+    bytes: int = 0
+
+    @property
+    def size_human(self) -> str:
+        return human_total(self.bytes)
 
 
 @dataclass(frozen=True, slots=True)
