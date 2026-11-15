@@ -94,6 +94,10 @@ class FileStorageServices:
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
 
+    async def category_totals(self) -> dict[FileCategory, tuple[int, int]]:
+        """Files and bytes per category (one round trip, thanks to the view)."""
+        return await self._repository.category_totals()
+
     async def stats(self) -> dict[str, Any]:
         counts = await self.category_counts()
         total_bytes = await self._repository.total_size()
