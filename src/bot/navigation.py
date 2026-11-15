@@ -22,6 +22,8 @@ from src.bot.keyboards import (
     file_actions_kb,
     folder_files_kb,
     folders_kb,
+    groups_kb,
+    help_kb,
     main_menu_kb,
     pick_folder_kb,
     search_list_kb,
@@ -108,7 +110,16 @@ async def build(
         return views.stats_text(await services.files.stats()), back_to_menu_kb()
 
     if kind == "help":
-        return views.help_text(), back_to_menu_kb()
+        return views.help_text(), help_kb()
+
+    if kind == "join_password":
+        return views.join_prompt_text(), back_to_menu_kb()
+
+    if kind == "join_groups":
+        groups = sorted(
+            services.settings.storage_chats().items(), key=lambda item: item[0].value
+        )
+        return views.join_groups_text(), groups_kb(groups)
 
     # The main menu (and any screen that no longer exists) shows the library total.
     stats = await services.files.stats()
