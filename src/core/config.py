@@ -49,8 +49,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TG_SPACE_BOT_TOKEN", "BOT_TOKEN")
     )
     webhook_url: str = Field(
-        "",
-        validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL"),
+        "", validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL")
     )
 
     supabase_url: str = Field(validation_alias=AliasChoices("SUPABASE_URL"))

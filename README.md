@@ -67,3 +67,18 @@ because of a database hiccup.
 - `TG_SPACE_BOT_HOST` — bind address (default `0.0.0.0`).
 - `TG_SPACE_BOT_PORT` — HTTP port when `PORT` is not set (default `8000`).
 - `TG_SPACE_BOT_WEBHOOK_URL` — reserved for a future webhook mode.
+- `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
+  (leave empty to allow everybody).
+- `PAGE_SIZE` — search results per page (default `10`, capped at `20`).
+- `LOG_LEVEL` — logging level (default `INFO`).
+- `REQUEST_TIMEOUT` — Supabase request timeout in seconds (default `30`).
+
+Storage group variables use the **singular** category name —
+`TG_STORAGE_CHAT_DOCUMENT`, `TG_STORAGE_CHAT_IMAGE`, `TG_STORAGE_CHAT_VIDEO`,
+`TG_STORAGE_CHAT_AUDIO`, `TG_STORAGE_CHAT_ARCHIVE`, `TG_STORAGE_CHAT_OTHER`.
+A category with no group refuses uploads, so set all six (one group may serve
+several categories).
+
+`SUPABASE_SERVICE_KEY` accepts both key formats: the legacy `service_role` JWT
+and the new `sb_secret_...` secret key. The new keys are sent on the `apikey`
+header only, because PostgREST rejects non-JWT values on `Authorization`.
