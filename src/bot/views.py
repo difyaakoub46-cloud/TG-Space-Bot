@@ -17,6 +17,7 @@ from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size
 
 _NOT_MODIFIED = "message is not modified"
+_MAX_TRACKED_MESSAGES = 100
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,31 @@ async def delete_screen_message(bot: Bot, chat_id: int, message_id: int) -> None
         pass
 
 
+async def remember(state: FSMContext, *message_ids: int) -> None:
+    """Track messages the main menu should wipe together with the results."""
+    ids = [int(mid) for mid in message_ids if mid]
+    if not ids:
+        return
+    data = await state.get_data()
+    tracked = list(data.get("cleanup_ids") or [])
+    tracked.extend(ids)
+    await state.update_data(cleanup_ids=tracked[-_MAX_TRACKED_MESSAGES:])
+
+
+async def clear_tracked(bot: Bot, chat_id: int, state: FSMContext) -> None:
+    """Delete every tracked message of this chat, leaving an empty log."""
+    data = await state.get_data()
+    tracked = list(dict.fromkeys(data.get("cleanup_ids") or []))
+    screen_id = data.get("screen_message_id")
+    if screen_id and screen_id not in tracked:
+        tracked.append(screen_id)
+
+    for message_id in tracked:
+        await delete_screen_message(bot, chat_id, message_id)
+
+    await state.update_data(cleanup_ids=[], screen_message_id=None)
+
+
 async def _render_screen(
     bot: Bot,
     chat_id: int,
@@ -81,11 +107,15 @@ async def _render_screen(
 
 
 async def reset_flow(state: FSMContext) -> None:
-    """End the current workflow while keeping the tracked screen message."""
-    screen_id = (await state.get_data()).get("screen_message_id")
+    """End the current workflow, keeping the screen and the cleanup list."""
+    data = await state.get_data()
+    screen_id = data.get("screen_message_id")
+    cleanup_ids = data.get("cleanup_ids")
     await state.clear()
     if screen_id:
         await state.update_data(screen_message_id=screen_id)
+    if cleanup_ids:
+        await state.update_data(cleanup_ids=cleanup_ids)
 
 
 async def set_screen(
@@ -109,6 +139,7 @@ async def set_screen(
         text, reply_markup=reply_markup, disable_web_page_preview=True
     )
     await state.update_data(screen_message_id=sent.message_id)
+    await remember(state, sent.message_id)
 
 
 async def _safe_answer(
@@ -157,6 +188,7 @@ async def set_screen_cb(
         bot, chat_id, callback.message.message_id, text, reply_markup
     ):
         await state.update_data(screen_message_id=callback.message.message_id)
+        await remember(state, callback.message.message_id)
         await _safe_answer(callback)
         return
 
@@ -164,6 +196,7 @@ async def set_screen_cb(
         text, reply_markup=reply_markup, disable_web_page_preview=True
     )
     await state.update_data(screen_message_id=sent.message_id)
+    await remember(state, sent.message_id)
     await _safe_answer(callback)
 
 

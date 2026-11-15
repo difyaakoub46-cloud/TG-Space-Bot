@@ -45,6 +45,7 @@ async def cmd_library(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
     await views.reset_flow(state)
+    await views.remember(state, message.message_id)
     counts = await services.files.category_counts()
     await views.set_screen(
         bot, message, state, views.categories_text(counts), categories_kb(counts)

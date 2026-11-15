@@ -15,8 +15,11 @@ router = Router(name="commands")
 
 
 async def _main_menu(message: Message, state: FSMContext, bot) -> None:
+    # The main menu is the only surviving message: everything above it is wiped.
+    await views.clear_tracked(bot, message.chat.id, state)
     await views.reset_flow(state)
     await views.set_screen(bot, message, state, views.welcome_text(), main_menu_kb())
+    await views.remember(state, message.message_id)
 
 
 @router.message(CommandStart())
@@ -28,6 +31,7 @@ async def cmd_start(message: Message, state: FSMContext, bot) -> None:
 @router.message(F.text == BTN_HELP)
 async def cmd_help(message: Message, state: FSMContext, bot) -> None:
     await views.reset_flow(state)
+    await views.remember(state, message.message_id)
     await views.set_screen(bot, message, state, views.help_text(), back_to_menu_kb())
 
 
@@ -38,6 +42,10 @@ async def cmd_cancel(message: Message, state: FSMContext, bot) -> None:
 
 @router.callback_query(MenuCB.filter(F.action == "main"))
 async def menu_main_callback(callback: CallbackQuery, state: FSMContext, bot) -> None:
+    if callback.message is not None:
+        await views.clear_tracked(
+            callback.bot, callback.message.chat.id, state
+        )
     await views.reset_flow(state)
     await views.set_screen_cb(callback, state, views.welcome_text(), main_menu_kb())
 
@@ -72,6 +80,7 @@ async def cmd_stats(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
     await views.reset_flow(state)
+    await views.remember(state, message.message_id)
     stats = await services.files.stats()
     await views.set_screen(
         bot, message, state, views.stats_text(stats), back_to_menu_kb()

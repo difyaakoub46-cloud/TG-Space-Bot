@@ -59,6 +59,7 @@ async def _show_results(
 @router.message(Command("search"))
 @router.message(F.text == BTN_SEARCH)
 async def cmd_search(message: Message, state: FSMContext, bot) -> None:
+    await views.remember(state, message.message_id)
     await state.set_state(SearchStates.waiting_query)
     await state.update_data(search_query="")
     await views.set_screen(
@@ -88,6 +89,7 @@ async def search_query_message(
 
     await state.set_state(None)
     await state.update_data(search_query=query)
+    await views.remember(state, message.message_id)
 
     results = await services.files.search(query)
     per_page = _per_page(services)
