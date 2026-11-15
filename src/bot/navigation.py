@@ -20,6 +20,7 @@ from src.bot.keyboards import (
     categories_kb,
     category_files_kb,
     file_actions_kb,
+    folder_delete_confirm_kb,
     folder_files_kb,
     folders_kb,
     groups_kb,
@@ -49,7 +50,9 @@ async def build(
     if kind == "categories":
         totals = await services.files.category_totals()
         folders = await services.files.folders(int(screen.get("u") or 0))
-        return views.categories_text(totals, folders), categories_kb(totals, folders)
+        return views.categories_text(totals, len(folders)), categories_kb(
+            totals, len(folders)
+        )
 
     if kind == "category":
         category = parse_category(str(screen.get("name") or ""))
@@ -68,7 +71,18 @@ async def build(
 
     if kind == "folders":
         folders = await services.files.folders(int(screen.get("u") or 0))
-        return views.folders_text(folders), folders_kb(folders)
+        per_page = services.settings.results_per_page()
+        total_pages = max(1, -(-len(folders) // per_page))
+        try:
+            page = max(1, min(int(screen.get("p") or 1), total_pages))
+        except (TypeError, ValueError):
+            page = 1
+        start = (page - 1) * per_page
+        items = folders[start : start + per_page]
+        return (
+            views.folders_text(items, page, total_pages, total=len(folders)),
+            folders_kb(items, page, total_pages),
+        )
 
     if kind == "folder":
         folder = await services.files.folder(
@@ -76,7 +90,20 @@ async def build(
         )
         if folder is not None:
             files = await services.files.folder_files(folder.id)
-            return views.folder_text(folder, files), folder_files_kb(files)
+            return (
+                views.folder_text(folder, files),
+                folder_files_kb(files, folder.id),
+            )
+
+    if kind == "folder_delete":
+        folder = await services.files.folder(
+            str(screen.get("id") or ""), int(screen.get("u") or 0)
+        )
+        if folder is not None:
+            return (
+                views.folder_delete_text(folder),
+                folder_delete_confirm_kb(folder.id),
+            )
 
     if kind == "pick_folder":
         record = await services.files.get(str(screen.get("file") or ""))
