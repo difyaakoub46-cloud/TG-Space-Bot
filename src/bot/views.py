@@ -287,12 +287,12 @@ def stats_text(stats: Mapping[str, Any]) -> str:
 
 def categories_text(
     totals: Mapping[FileCategory, tuple[int, int]],
-    folders: Sequence[Folder] = (),
+    folder_count: int = 0,
 ) -> str:
-    """The library: every category with its count and total size, plus folders.
+    """The library: every category with its count and total size.
 
-    The folders are listed here (not only in their own screen) so the library is the
-    single place that shows everything the user has organised.
+    The folders keep their own screen, where they are sorted alphabetically and
+    paged, so repeating them here only crowded the keyboard.
     """
     total_files = sum(count for count, _size in totals.values())
     total_bytes = sum(size for _count, size in totals.values())
@@ -312,15 +312,10 @@ def categories_text(
         )
 
     lines.append("")
-    lines.append("<b>📁 المجلدات</b>")
-    if folders:
-        for folder in folders:
-            lines.append(
-                f"📁 {_escape(folder.name)} — {format_number(folder.count)} ملف · "
-                f"{_escape(human_total(folder.bytes))}"
-            )
-    else:
-        lines.append("لا توجد مجلدات بعد — أنشئ واحداً بـ«➕ مجلد جديد».")
+    lines.append(
+        f"📁 المجلدات: {format_number(folder_count)} — "
+        "افتحها بزر «📁 المجلدات»."
+    )
     return "\n".join(lines)
 
 
@@ -399,11 +394,17 @@ def file_text(record: StoredFile, folders: Sequence[str] = ()) -> str:
     return "\n".join(lines)
 
 
-def folders_text(folders: Sequence[Folder]) -> str:
+def folders_text(
+    folders: Sequence[Folder],
+    page: int = 1,
+    total_pages: int = 1,
+    total: int | None = None,
+) -> str:
+    """One page of the folders, already sorted alphabetically."""
     lines = [
         "📁 <b>المجلدات</b>",
         "",
-        "مجلدات افتراضية للتنظيم والاختصار — الملفات نفسها تبقى في مجموعات تيليغرام.",
+        "مجلدات افتراضية مرتّبة أبجدياً — الملفات نفسها تبقى في مجموعات تيليغرام.",
         "",
     ]
     if folders:
@@ -417,7 +418,23 @@ def folders_text(folders: Sequence[Folder]) -> str:
             )
     else:
         lines.append("لا توجد مجلدات بعد. أنشئ أول مجلد بـ«➕ مجلد جديد».")
+    if total_pages > 1:
+        lines.append("")
+        if total is not None:
+            lines.append(f"عدد المجلدات: {format_number(total)}")
+        lines.append(f"الصفحة {page} من {total_pages}")
     return "\n".join(lines)
+
+
+def folder_delete_text(folder: Folder) -> str:
+    """Confirm deleting the label; the files are never part of this action."""
+    return (
+        "🗑 <b>حذف المجلد</b>\n\n"
+        f"المجلد: «{_escape(folder.name)}» — {format_number(folder.count)} ملف\n\n"
+        "سيُحذف المجلد التنظيمي فقط، وتبقى جميع الملفات في المكتبة "
+        "وفي مجموعات التخزين دون أي تغيير.\n\n"
+        "هل تريد المتابعة؟"
+    )
 
 
 def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
