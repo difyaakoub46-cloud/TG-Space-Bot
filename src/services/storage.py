@@ -29,40 +29,34 @@ class StorageService:
         self._bot = bot
         self._settings = settings
 
-    async def upload(self, message: Message, candidate: FileCandidate) -> tuple[int, int]:
+    @property
+    def bot(self) -> Bot:
+        return self._bot
+
+    async def upload(
+        self, message: Message, candidate: FileCandidate
+    ) -> tuple[int, int]:
         """Copy a user's file into its category group; returns ``(chat_id, message_id)``."""
         target_chat_id = self._settings.storage_chat_for(candidate.category)
-        # chat_id_out is captured so we keep the (possibly migrated) destination id.
-        chat_id_out: list[int] = [target_chat_id]
         stored = await call_with_retry(
             self._bot.copy_message,
             chat_id=target_chat_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
-            chat_id_out=chat_id_out,
         )
-        # aiogram returns a MessageId here, not a full Message, so we cannot read
-        # ``stored.chat``. We rely on the destination chat id that was actually used.
-        return chat_id_out[0], stored.message_id
+        return target_chat_id, stored.message_id
 
     async def deliver(
         self, storage_chat_id: int, storage_message_id: int, target_chat_id: int
     ) -> tuple[int, int]:
-        """Send the stored copy back to a user without downloading anything.
-
-        Returns ``(chat_id, message_id)`` of the delivered copy. aiogram returns a
-        ``MessageId`` (not a full ``Message``) from ``copy_message``, so we can't read
-        ``.chat`` and instead report the destination chat id that was actually used.
-        """
-        chat_id_out: list[int] = [target_chat_id]
+        """Send the stored copy back to a user without downloading anything."""
         stored = await call_with_retry(
             self._bot.copy_message,
             chat_id=target_chat_id,
             from_chat_id=storage_chat_id,
             message_id=storage_message_id,
-            chat_id_out=chat_id_out,
         )
-        return chat_id_out[0], stored.message_id
+        return target_chat_id, stored.message_id
 
     async def remove(self, storage_chat_id: int, storage_message_id: int) -> bool:
         """Delete the stored copy. Returns ``False`` when it was already gone."""
@@ -76,7 +70,9 @@ class StorageService:
         except TelegramBadRequest as exc:
             if any(marker in str(exc).lower() for marker in _MISSING_MESSAGE_MARKERS):
                 logger.warning(
-                    "Storage message %s/%s is already missing", storage_chat_id, storage_message_id
+                    "Storage message %s/%s is already missing",
+                    storage_chat_id,
+                    storage_message_id,
                 )
                 return False
             raise
@@ -89,11 +85,15 @@ class StorageService:
                 chat = await self._bot.get_chat(chat_id)
             except TelegramAPIError as exc:
                 logger.error(
-                    "Storage chat %s is unreachable (%s). Add the bot as an admin.", chat_id, exc
+                    "Storage chat %s is unreachable (%s). Add the bot as an admin.",
+                    chat_id,
+                    exc,
                 )
                 unreachable.append(chat_id)
             else:
-                logger.info("Storage chat ready: %s (%s)", chat_id, chat.title or chat.type)
+                logger.info(
+                    "Storage chat ready: %s (%s)", chat_id, chat.title or chat.type
+                )
         return unreachable
 
     def _unique_chats(self) -> Iterable[int]:

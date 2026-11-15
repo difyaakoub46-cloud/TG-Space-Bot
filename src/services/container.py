@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+from aiogram import Bot
+
 from src.core.config import Settings
 from src.db.repository import FileRepository
-from src.services.storage import FileStorageServices
+from src.services.files import FileStorageServices
+from src.services.storage import StorageService
 
 
 class Services:
+    """Single composition root shared by the middleware and every handler."""
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.files = FileStorageServices(settings)
+        self.repository = FileRepository(settings)
+        self.files = FileStorageServices(settings, self.repository)
+        self.storage: StorageService | None = None
+        self.bot: Bot | None = None
+
+    def bind_bot(self, bot: Bot) -> None:
+        """Attach the Telegram bot once it exists (needed by the storage backend)."""
+        self.bot = bot
+        self.storage = StorageService(bot, self.settings)
+        self.files.bind_storage(self.storage)
 
 
 def build_services(settings: Settings) -> Services:
