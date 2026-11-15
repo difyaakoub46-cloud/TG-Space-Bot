@@ -28,6 +28,7 @@ class Folder:
     name: str
     count: int = 0
     bytes: int = 0
+    favorite: bool = False
 
     @property
     def size_human(self) -> str:
