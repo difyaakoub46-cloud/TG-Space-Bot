@@ -288,10 +288,15 @@ class FileRepository:
                 "order": "name.asc",
             },
         )
-        folders = [
-            Folder(id=str(row["id"]), name=str(row["name"]))
-            for row in self._rows(response)
-        ]
+        # Sorted in Python as well: the database collation is not guaranteed to
+        # order Arabic and Latin names the way the user expects.
+        folders = sorted(
+            (
+                Folder(id=str(row["id"]), name=str(row["name"]))
+                for row in self._rows(response)
+            ),
+            key=lambda folder: (folder.name.casefold(), folder.name),
+        )
         if not folders:
             return []
 
@@ -374,6 +379,20 @@ class FileRepository:
         count, size = totals.get(folder.id, (0, 0))
         return Folder(id=folder.id, name=folder.name, count=count, bytes=size)
 
+    async def delete_folder(self, folder_id: str, user_id: int) -> bool:
+        """Delete the folder row only; the files themselves are never touched.
+
+        The ``folder_files`` links cascade with the folder, so every row of
+        ``files`` (and every Telegram copy behind it) stays exactly as it was.
+        """
+        response = await self._request(
+            "DELETE",
+            path="folders",
+            params={"id": f"eq.{folder_id}", "user_id": f"eq.{user_id}"},
+            prefer="return=representation",
+        )
+        return bool(self._rows(response))
+
     async def add_to_folder(self, folder_id: str, file_id: str) -> None:
         """Link a file to a folder (linking twice is a no-op)."""
         await self._request(
@@ -411,7 +430,7 @@ class FileRepository:
             payload = row.get("folders")
             if isinstance(payload, dict) and payload.get("name"):
                 names.append(str(payload["name"]))
-        return sorted(names)
+        return sorted(names, key=lambda name: (name.casefold(), name))
 
     async def close(self) -> None:
         if self._owns_client:
