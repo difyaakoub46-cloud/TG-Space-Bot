@@ -74,7 +74,15 @@ async def safe_delete_message(
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
         return True
-    except TelegramAPIError:
+    except TelegramAPIError as exc:
+        # Deleting the user's copy is cosmetic: never fail the upload because of
+        # it, but keep the reason visible in the logs.
+        logger.warning(
+            "Could not delete message %s in chat %s: %s",
+            message_id,
+            chat_id,
+            exc,
+        )
         return False
 
 
