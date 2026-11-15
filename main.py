@@ -16,6 +16,7 @@ from src.bot.dispatcher import build_dispatcher
 from src.core.config import Settings
 from src.core.logging import setup_logging
 from src.services.container import build_services
+from src.utils.filetypes import FileCategory
 from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,13 @@ async def run_bot(settings: Settings, services, dispatcher) -> None:
             "Storage groups configured for: %s",
             ", ".join(category.value for category in configured),
         )
+        missing = [c.value for c in FileCategory if c not in configured]
+        if missing:
+            logger.warning(
+                "No storage group configured for: %s - uploads of these types "
+                "will be refused (check the TG_STORAGE_CHAT_<CATEGORY> names)",
+                ", ".join(missing),
+            )
         try:
             await services.storage.verify_chats()
         except Exception:  # noqa: BLE001 - startup must not fail on a bad chat id

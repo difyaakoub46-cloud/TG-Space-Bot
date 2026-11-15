@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -11,6 +13,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from src.utils.filetypes import FileCategory
 
 DEFAULT_WEB_PORT = 8000
+DEFAULT_PAGE_SIZE = 10
+MAX_PAGE_SIZE = 20
+
+logger = logging.getLogger(__name__)
 
 
 def _blank_to_none(value: object) -> object:
@@ -58,7 +64,10 @@ class Settings(BaseSettings):
     )
 
     storage_chat_document: OptionalChatId = Field(
-        None, validation_alias=AliasChoices("TG_STORAGE_CHAT_DOCUMENT")
+        None,
+        validation_alias=AliasChoices(
+            "TG_STORAGE_CHAT_DOCUMENT", "TG_STORAGE_CHAT_DOCUMENTS"
+        ),
     )
     storage_chat_image: OptionalChatId = Field(
         None, validation_alias=AliasChoices("TG_STORAGE_CHAT_IMAGE")
@@ -70,20 +79,47 @@ class Settings(BaseSettings):
         None, validation_alias=AliasChoices("TG_STORAGE_CHAT_AUDIO")
     )
     storage_chat_archive: OptionalChatId = Field(
-        None, validation_alias=AliasChoices("TG_STORAGE_CHAT_ARCHIVE")
+        None,
+        validation_alias=AliasChoices(
+            "TG_STORAGE_CHAT_ARCHIVE", "TG_STORAGE_CHAT_ARCHIVES"
+        ),
     )
     storage_chat_other: OptionalChatId = Field(
-        None, validation_alias=AliasChoices("TG_STORAGE_CHAT_OTHER")
+        None,
+        validation_alias=AliasChoices(
+            "TG_STORAGE_CHAT_OTHER", "TG_STORAGE_CHAT_DEFAULT"
+        ),
     )
 
     request_timeout: float = 30.0
+    log_level: str = Field("INFO", validation_alias=AliasChoices("LOG_LEVEL"))
+    page_size: int = Field(
+        DEFAULT_PAGE_SIZE, validation_alias=AliasChoices("PAGE_SIZE")
+    )
+    allowed_user_ids_raw: str = Field(
+        "", validation_alias=AliasChoices("ALLOWED_USER_IDS")
+    )
+
+    def allowed_users(self) -> frozenset[int]:
+        """Telegram user ids allowed to use the bot (empty = everybody)."""
+        ids: set[int] = set()
+        for part in re.split(r"[,\s]+", self.allowed_user_ids_raw.strip()):
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except ValueError:
+                logger.warning("Ignoring invalid ALLOWED_USER_IDS entry: %r", part)
+        return frozenset(ids)
+
+    def results_per_page(self) -> int:
+        return max(1, min(self.page_size, MAX_PAGE_SIZE))
 
     server_host: str = Field(
         "0.0.0.0", validation_alias=AliasChoices("TG_SPACE_BOT_HOST", "HOST")
     )
     server_port: int = Field(
-        DEFAULT_WEB_PORT,
-        validation_alias=AliasChoices("PORT", "TG_SPACE_BOT_PORT"),
+        DEFAULT_WEB_PORT, validation_alias=AliasChoices("PORT", "TG_SPACE_BOT_PORT")
     )
 
     def storage_chats(self) -> dict[FileCategory, int]:

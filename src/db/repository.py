@@ -47,11 +47,14 @@ class FileRepository:
 
     def _headers(self, prefer: str | None = None) -> dict[str, str]:
         key = self._settings.supabase_key.get_secret_value()
-        headers = {
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
-            "Accept": "application/json",
-        }
+        headers = {"apikey": key, "Accept": "application/json"}
+        # New Supabase keys (sb_secret_... / sb_publishable_...) are opaque tokens,
+        # not JWTs. PostgREST tries to parse anything on Authorization as a JWT, so
+        # sending such a key there makes every request fail with 401. Legacy
+        # service_role / anon keys are JWTs (they start with "eyJ") and still go on
+        # both headers.
+        if key.startswith("eyJ"):
+            headers["Authorization"] = f"Bearer {key}"
         if prefer:
             headers["Prefer"] = prefer
         return headers

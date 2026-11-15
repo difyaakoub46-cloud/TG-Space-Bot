@@ -9,6 +9,8 @@ from src.core.config import Settings
 
 
 def setup_logging(settings: Settings) -> None:
-    level = logging.INFO
+    level = getattr(logging, settings.log_level.strip().upper(), logging.INFO)
+    if not isinstance(level, int):
+        level = logging.INFO
     fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
     logging.basicConfig(level=level, format=fmt, stream=sys.stdout)
