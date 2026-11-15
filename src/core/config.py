@@ -31,6 +31,7 @@ def _blank_to_none(value: object) -> object:
 
 
 OptionalChatId = Annotated[int | None, BeforeValidator(_blank_to_none)]
+OptionalStr = Annotated[str | None, BeforeValidator(_blank_to_none)]
 
 
 class ConfigurationError(RuntimeError):
@@ -49,7 +50,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TG_SPACE_BOT_TOKEN", "BOT_TOKEN")
     )
     webhook_url: str = Field(
-        "", validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL")
+        "",
+        validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL"),
     )
 
     supabase_url: str = Field(validation_alias=AliasChoices("SUPABASE_URL"))
@@ -87,6 +89,18 @@ class Settings(BaseSettings):
         None,
         validation_alias=AliasChoices(
             "TG_STORAGE_CHAT_OTHER", "TG_STORAGE_CHAT_DEFAULT"
+        ),
+    )
+
+    # Owner-only gate for the storage groups (see the access router).
+    owner_id: OptionalChatId = Field(
+        None,
+        validation_alias=AliasChoices("OWNER_ID", "OWNER_TELEGRAM_ID", "TG_OWNER_ID"),
+    )
+    join_password: Annotated[SecretStr | None, BeforeValidator(_blank_to_none)] = Field(
+        None,
+        validation_alias=AliasChoices(
+            "JOIN_PASSWORD", "GROUP_JOIN_PASSWORD", "ACCESS_PASSWORD"
         ),
     )
 
