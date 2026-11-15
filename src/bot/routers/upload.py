@@ -10,8 +10,8 @@ from aiogram.enums import ChatType
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from src.bot import views
-from src.bot.keyboards import file_actions_kb, main_menu_kb
+from src.bot import navigation, views
+from src.bot.keyboards import main_menu_kb
 from src.services.container import Services
 from src.utils.filetypes import extract_candidate
 from src.utils.telegram import safe_delete_message, safe_edit_text
@@ -67,10 +67,11 @@ async def handle_upload(
     # screen instead, which keeps the chat free of one message per upload.
     await safe_delete_message(bot, message.chat.id, message.message_id)
     await safe_delete_message(bot, status.chat.id, status.message_id)
-    await views.set_screen(
-        bot,
+    await navigation.navigate_message(
         message,
         state,
-        views.file_saved_text(record),
-        file_actions_kb(record.id),
+        bot,
+        services,
+        {"k": "file", "id": record.id},
+        notice=views.file_saved_text(record),
     )
