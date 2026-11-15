@@ -1,0 +1,156 @@
+"""Screen navigation: one persistent screen, a trail and a back button.
+
+Every screen is described by a small, JSON-friendly ``key`` such as
+``{"k": "category", "name": "video"}``. That lets the *back* button rebuild the
+previous screen from the database instead of keeping rendered text around, and it
+survives the FSM state being cleared between flows.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from aiogram import Bot
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+from src.bot import views
+from src.bot.keyboards import (
+    back_to_menu_kb,
+    categories_kb,
+    category_files_kb,
+    file_actions_kb,
+    main_menu_kb,
+    search_list_kb,
+    search_prompt_kb,
+)
+from src.services.container import Services
+from src.utils.filetypes import parse_category
+
+logger = logging.getLogger(__name__)
+
+MAX_TRAIL = 20
+
+MAIN: dict[str, object] = {"k": "main"}
+
+
+async def build(
+    services: Services, screen: dict[str, object] | None
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Rebuild the text and the keyboard of a screen from its key."""
+    screen = screen or MAIN
+    kind = screen.get("k")
+
+    if kind == "categories":
+        counts = await services.files.category_counts()
+        return views.categories_text(counts), categories_kb(counts)
+
+    if kind == "category":
+        category = parse_category(str(screen.get("name") or ""))
+        files = await services.files.by_category(category)
+        return views.category_text(category, files), category_files_kb(files, category)
+
+    if kind == "file":
+        record = await services.files.get(str(screen.get("id") or ""))
+        if record is not None:
+            return views.file_text(record), file_actions_kb(record.id)
+
+    if kind == "search_prompt":
+        return views.search_prompt_text(), search_prompt_kb()
+
+    if kind == "search":
+        query = str(screen.get("q") or "")
+        results = await services.files.search(query)
+        per_page = services.settings.results_per_page()
+        pages = max(1, -(-len(results) // per_page))
+        try:
+            page = max(1, min(int(screen.get("p") or 1), pages))
+        except (TypeError, ValueError):
+            page = 1
+        start = (page - 1) * per_page
+        items = results[start : start + per_page]
+        return (
+            views.search_results_text(items, query, page, pages, total=len(results)),
+            search_list_kb(items, page, pages),
+        )
+
+    if kind == "stats":
+        return views.stats_text(await services.files.stats()), back_to_menu_kb()
+
+    if kind == "help":
+        return views.help_text(), back_to_menu_kb()
+
+    return views.welcome_text(), main_menu_kb()
+
+
+async def _push_current(state: FSMContext) -> None:
+    """Remember the screen being left so the back button can return to it."""
+    data = await state.get_data()
+    current = data.get("screen_key")
+    if not current:
+        return
+    trail = [dict(entry) for entry in data.get("trail") or []]
+    if trail and trail[-1] == current:
+        return
+    trail.append(dict(current))
+    await state.update_data(trail=trail[-MAX_TRAIL:])
+
+
+async def _render(
+    services: Services,
+    screen: dict[str, object],
+    notice: str | None,
+    markup: InlineKeyboardMarkup | None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    text, keyboard = await build(services, screen)
+    return notice or text, markup or keyboard
+
+
+async def navigate_message(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    services: Services,
+    screen: dict[str, object],
+    *,
+    notice: str | None = None,
+    markup: InlineKeyboardMarkup | None = None,
+    push: bool = True,
+) -> None:
+    if push:
+        await _push_current(state)
+    text, keyboard = await _render(services, screen, notice, markup)
+    await state.update_data(screen_key=dict(screen))
+    await views.set_screen(bot, message, state, text, keyboard)
+
+
+async def navigate_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+    bot: Bot,
+    services: Services,
+    screen: dict[str, object],
+    *,
+    notice: str | None = None,
+    markup: InlineKeyboardMarkup | None = None,
+    push: bool = True,
+) -> None:
+    if push:
+        await _push_current(state)
+    text, keyboard = await _render(services, screen, notice, markup)
+    await state.update_data(screen_key=dict(screen))
+    await views.set_screen_cb(callback, state, text, keyboard)
+
+
+async def go_back(
+    callback: CallbackQuery, state: FSMContext, services: Services
+) -> None:
+    """Return to the previous screen, leaving every message untouched."""
+    data = await state.get_data()
+    trail = [dict(entry) for entry in data.get("trail") or []]
+    target = trail.pop() if trail else dict(MAIN)
+    await state.update_data(trail=trail)
+
+    text, keyboard = await build(services, target)
+    await state.update_data(screen_key=dict(target))
+    await views.set_screen_cb(callback, state, text, keyboard)
