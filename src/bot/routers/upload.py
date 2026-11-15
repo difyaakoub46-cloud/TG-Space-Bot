@@ -44,6 +44,9 @@ async def handle_upload(
         return
 
     await views.reset_flow(state)
+    # Track the incoming file too, so a copy that survives any failure is removed
+    # the next time the main menu is opened.
+    await views.remember(state, message.message_id)
     status = await message.answer("⏳ جارٍ نقل الملف إلى مجموعة التخزين…")
 
     try:
