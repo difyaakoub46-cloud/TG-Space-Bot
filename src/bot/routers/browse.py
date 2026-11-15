@@ -10,17 +10,13 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from src.bot import views
+from src.bot import navigation, views
 from src.bot.keyboards import (
     BTN_LIBRARY,
     CategoryCB,
     FileCB,
     MenuCB,
-    back_to_menu_kb,
-    categories_kb,
-    category_files_kb,
     delete_confirm_kb,
-    file_actions_kb,
 )
 from src.services.container import Services
 from src.utils.filetypes import parse_category
@@ -30,15 +26,6 @@ logger = logging.getLogger(__name__)
 router = Router(name="browse")
 
 
-async def _show_categories(
-    callback: CallbackQuery, services: Services, state: FSMContext, bot
-) -> None:
-    counts = await services.files.category_counts()
-    await views.set_screen_cb(
-        callback, state, views.categories_text(counts), categories_kb(counts)
-    )
-
-
 @router.message(Command("library"))
 @router.message(F.text == BTN_LIBRARY)
 async def cmd_library(
@@ -46,9 +33,8 @@ async def cmd_library(
 ) -> None:
     await views.reset_flow(state)
     await views.remember(state, message.message_id)
-    counts = await services.files.category_counts()
-    await views.set_screen(
-        bot, message, state, views.categories_text(counts), categories_kb(counts)
+    await navigation.navigate_message(
+        message, state, bot, services, {"k": "categories"}
     )
 
 
@@ -57,7 +43,9 @@ async def categories_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
     await views.reset_flow(state)
-    await _show_categories(callback, services, state, bot)
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "categories"}
+    )
 
 
 @router.callback_query(CategoryCB.filter())
@@ -66,12 +54,12 @@ async def category_callback(
 ) -> None:
     data = CategoryCB.unpack(callback.data)
     category = parse_category(data.name)
-    files = await services.files.by_category(category)
-    await views.set_screen_cb(
+    await navigation.navigate_callback(
         callback,
         state,
-        views.category_text(category, files),
-        category_files_kb(files, category),
+        bot,
+        services,
+        {"k": "category", "name": category.value},
     )
 
 
@@ -84,8 +72,8 @@ async def file_view_callback(
     if record is None:
         await callback.answer("الملف غير موجود.", show_alert=True)
         return
-    await views.set_screen_cb(
-        callback, state, views.file_text(record), file_actions_kb(record.id)
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "file", "id": record.id}
     )
 
 
@@ -100,7 +88,9 @@ async def file_send_callback(
         return
 
     try:
-        await services.files.deliver(record, callback.message.chat.id)
+        delivered_id = await services.files.deliver(
+            record, callback.message.chat.id
+        )
     except TelegramAPIError as exc:
         logger.warning("Could not deliver %s: %s", record.id, exc)
         await callback.answer(
@@ -108,8 +98,17 @@ async def file_send_callback(
         )
         return
 
-    await views.set_screen_cb(
-        callback, state, views.file_sent_text(record), back_to_menu_kb()
+    # The delivered copy is a real message in the chat: track it so the main menu
+    # removes it too instead of leaving the file behind.
+    await views.remember(state, delivered_id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "file", "id": record.id},
+        notice=views.file_sent_text(record),
+        push=False,
     )
 
 
@@ -122,8 +121,15 @@ async def file_delete_callback(
     if record is None:
         await callback.answer("الملف غير موجود.", show_alert=True)
         return
-    await views.set_screen_cb(
-        callback, state, views.deletion_text(record), delete_confirm_kb(record.id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "file", "id": record.id},
+        notice=views.deletion_text(record),
+        markup=delete_confirm_kb(record.id),
+        push=False,
     )
 
 
@@ -136,6 +142,12 @@ async def file_delete_confirm_callback(
     if not deleted:
         await callback.answer("تعذّر حذف الملف.", show_alert=True)
         return
-    await views.set_screen_cb(
-        callback, state, "✅ تم حذف الملف من المكتبة.", back_to_menu_kb()
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "categories"},
+        notice="✅ تم حذف الملف من المكتبة.",
+        push=False,
     )
