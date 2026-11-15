@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 
 from aiogram import F, Router
@@ -28,6 +29,12 @@ FAILED_TEXT = (
 )
 
 
+def _reason(exc: BaseException) -> str:
+    """One short line describing why the copy failed, for fast diagnosis."""
+    text = " ".join(str(exc).split())
+    return html.escape(text[:200] or type(exc).__name__)
+
+
 @router.message(F.chat.type == ChatType.PRIVATE, SUPPORTED_MEDIA)
 async def handle_upload(
     message: Message, services: Services, state: FSMContext, bot
@@ -41,13 +48,13 @@ async def handle_upload(
 
     try:
         record = await services.files.save_from_message(message, candidate)
-    except Exception:  # noqa: BLE001 - every failure must be reported to the user
+    except Exception as exc:  # noqa: BLE001 - every failure must be reported
         logger.exception("Failed to store %s", candidate.file_name)
         await safe_edit_text(
             bot,
             status.chat.id,
             status.message_id,
-            FAILED_TEXT,
+            f"{FAILED_TEXT}\n\n<code>{_reason(exc)}</code>",
             reply_markup=main_menu_kb(),
         )
         return
