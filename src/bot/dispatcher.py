@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
 from src.bot.middlewares import AccessMiddleware, ContextMiddleware
-from src.bot.routers import browse, commands, fallback, search, upload
+from src.bot.routers import browse, commands, fallback, folders, search, upload
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ def build_dispatcher(services: Services) -> Dispatcher:
         upload.router,
         search.router,
         browse.router,
+        folders.router,
         fallback.router,
     )
 
