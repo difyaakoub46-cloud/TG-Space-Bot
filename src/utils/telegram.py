@@ -2,11 +2,49 @@
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
-from aiogram.types import CallbackQuery, Message
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
+from aiogram.types import Message
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def call_with_retry(
+    method: Callable[..., Awaitable[T]],
+    /,
+    *args: Any,
+    retries: int = 3,
+    **kwargs: Any,
+) -> T:
+    """Call an aiogram API method, honouring flood waits and retrying network blips."""
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await method(*args, **kwargs)
+        except TelegramRetryAfter as exc:
+            last_error = exc
+            if attempt == retries:
+                break
+            logger.warning("Flood wait: retrying in %ss", exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+        except TelegramNetworkError as exc:
+            last_error = exc
+            if attempt == retries:
+                break
+            await asyncio.sleep(0.5 * attempt)
+    assert last_error is not None
+    raise last_error
 
 
 async def safe_edit_text(

@@ -1,28 +1,69 @@
 # TG-Space-Bot
 
-Telegram bot that saves incoming files into the right Telegram storage group (document / image / video / audio / archive / other) and lets the user browse, search and manage the saved library.
+Telegram bot that saves incoming files into the right Telegram storage group (document / image / video / audio / archive / other) and lets the user browse, search, send back and delete the saved library.
 
 ## Stack
 
 - Python 3.12
-- aiogram 3.x (async)
+- aiogram 3.x (async, long polling)
 - Supabase (PostgreSQL + PostgREST)
+- FastAPI + Uvicorn (keep-alive health server)
 
 ## Local setup
 
 1. Copy `.env.example` to `.env` and fill in the values.
 2. Install dependencies: `pip install -r requirements.txt`.
-3. Run migrations against your Supabase project (see `migrations/`).
-4. Start the bot: `python main.py`.
+3. Run migrations: `SUPABASE_DATABASE_URL=postgresql://... python -m scripts.init_db`.
+4. Create one Telegram group per category, add the bot as an admin and put the
+   group chat id in `TG_STORAGE_CHAT_<CATEGORY>`.
+5. Start the bot: `python main.py`.
 
 ## Architecture
 
 - `src/core/` — settings and logging.
 - `src/db/` — PostgREST client and row models.
-- `src/services/` — storage routing and file operations.
-- `src/bot/` — dispatcher, middlewares, keyboards, views and routers.
-- `src/utils/` — file-type classification and formatting helpers.
+- `src/services/` — composition root, Telegram storage backend, file operations.
+- `src/bot/` — dispatcher, middleware, keyboards, views, states and routers.
+- `src/web/` — FastAPI keep-alive app.
+- `src/utils/` — classification, formatting and Telegram helpers.
 
 ## Single-screen UX
 
-The bot keeps one persistent interactive message per screen. Commands, browse and search flows render that same message via edits instead of sending new messages. Callback handlers use `callback.message.edit_text` and `await callback.answer()` to clear the loading state. The upload flow is the only path that intentionally sends a separate status message during file copy.
+The bot keeps one persistent message per chat. Commands, the library and the
+search flow render that same message with `edit_message_text` through
+`views.set_screen` / `views.set_screen_cb`, so navigation never floods the chat.
+The only extra messages are the upload status bubble and copies explicitly
+requested with the «إرسال» button.
+
+Callback data is typed with `CallbackData` factories in `src/bot/keyboards.py`
+(`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`), so routers filter and unpack it
+instead of parsing raw strings.
+
+## Keep-alive server (Render + UptimeRobot)
+
+`main.py` starts the bot in long polling and, in parallel, serves a small
+FastAPI app on `0.0.0.0:$PORT` (default `8000`):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/` | basic status payload |
+| `/ping` | plain liveness check |
+| `/health` | health probe with uptime and pid |
+| `/docs` | interactive API documentation |
+
+On Render:
+
+- Service type: **Web Service** (needs an open HTTP port).
+- Start command: `python main.py`.
+- Do not set `PORT`; Render injects it and the app reads it.
+- Add a UptimeRobot HTTP(s) monitor pointing at `https://<service>.onrender.com/health`
+  with a 5-minute interval to keep the instance awake.
+
+The HTTP endpoints never touch Supabase or Telegram, so a ping cannot fail
+because of a database hiccup.
+
+## Optional environment variables
+
+- `TG_SPACE_BOT_HOST` — bind address (default `0.0.0.0`).
+- `TG_SPACE_BOT_PORT` — HTTP port when `PORT` is not set (default `8000`).
+- `TG_SPACE_BOT_WEBHOOK_URL` — reserved for a future webhook mode.
