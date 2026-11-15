@@ -36,7 +36,11 @@ async def cmd_library(
     await views.reset_flow(state)
     await views.remember(state, message.message_id)
     await navigation.navigate_message(
-        message, state, bot, services, {"k": "categories"}
+        message,
+        state,
+        bot,
+        services,
+        {"k": "categories", "u": int(message.from_user.id)},
     )
 
 
@@ -46,7 +50,11 @@ async def categories_callback(
 ) -> None:
     await views.reset_flow(state)
     await navigation.navigate_callback(
-        callback, state, bot, services, {"k": "categories"}
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "categories", "u": int(callback.from_user.id)},
     )
 
 
@@ -222,7 +230,7 @@ async def file_delete_confirm_callback(
         state,
         bot,
         services,
-        {"k": "categories"},
+        {"k": "categories", "u": int(callback.from_user.id)},
         notice="✅ تم حذف الملف من المكتبة.",
         push=False,
     )
