@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import Counter
 from typing import Any, Mapping
 
 import httpx
 
 from src.core.config import Settings
-from src.db.models import StoredFile
+from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 
 logger = logging.getLogger(__name__)
@@ -59,14 +60,19 @@ class FileRepository:
             headers["Prefer"] = prefer
         return headers
 
-    async def _request(self, method: str, *, params: Mapping[str, str] | None = None,
+    def _url(self, path: str | None) -> str:
+        return self._endpoint if path is None else f"{self._settings.supabase_url}/rest/v1/{path}"
+
+    async def _request(self, method: str, *, path: str | None = None,
+                       params: Mapping[str, str] | None = None,
                        json: Any = None, prefer: str | None = None) -> httpx.Response:
+        url = self._url(path)
         last_error: Exception | None = None
         for attempt in (1, 2):
             try:
                 response = await self._client.request(
                     method,
-                    self._endpoint,
+                    url,
                     params=params,
                     json=json,
                     headers=self._headers(prefer),
@@ -80,7 +86,7 @@ class FileRepository:
 
             if response.status_code >= 400:
                 raise SupabaseError(
-                    f"{method} {self._endpoint} failed with {response.status_code}: "
+                    f"{method} {url} failed with {response.status_code}: "
                     f"{response.text[:300]}"
                 )
             return response
@@ -231,6 +237,117 @@ class FileRepository:
             return None
         value = rows[0].get("value")
         return int(value) if value is not None else None
+
+    async def rename(self, file_id: str, name: str) -> StoredFile | None:
+        """Change the display name only: the stored Telegram copy is untouched."""
+        response = await self._request(
+            "PATCH",
+            params={"id": f"eq.{file_id}"},
+            json={"file_name": name},
+            prefer="return=representation",
+        )
+        rows = self._rows(response)
+        return StoredFile.from_row(rows[0]) if rows else None
+
+    # ------------------------------------------------------------------ #
+    # Virtual folders
+    # ------------------------------------------------------------------ #
+    async def list_folders(self, user_id: int) -> list[Folder]:
+        """Folders of one user, each with the number of files it links to."""
+        response = await self._request(
+            "GET",
+            path="folders",
+            params={
+                "select": "id,name",
+                "user_id": f"eq.{user_id}",
+                "order": "name.asc",
+            },
+        )
+        folders = [
+            Folder(id=str(row["id"]), name=str(row["name"]))
+            for row in self._rows(response)
+        ]
+        if not folders:
+            return []
+
+        ids = ",".join(folder.id for folder in folders)
+        counts = await self._request(
+            "GET",
+            path="folder_files",
+            params={"select": "folder_id", "folder_id": f"in.({ids})"},
+        )
+        tally = Counter(str(row["folder_id"]) for row in self._rows(counts))
+        return [
+            Folder(id=folder.id, name=folder.name, count=tally.get(folder.id, 0))
+            for folder in folders
+        ]
+
+    async def create_folder(self, user_id: int, name: str) -> Folder:
+        response = await self._request(
+            "POST",
+            path="folders",
+            json={"user_id": user_id, "name": name},
+            prefer="return=representation",
+        )
+        rows = self._rows(response)
+        if not rows:
+            raise SupabaseError("Supabase did not return the created folder")
+        return Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
+
+    async def get_folder(self, folder_id: str, user_id: int) -> Folder | None:
+        response = await self._request(
+            "GET",
+            path="folders",
+            params={
+                "select": "id,name",
+                "id": f"eq.{folder_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        )
+        rows = self._rows(response)
+        if not rows:
+            return None
+        return Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
+
+    async def add_to_folder(self, folder_id: str, file_id: str) -> None:
+        """Link a file to a folder (linking twice is a no-op)."""
+        await self._request(
+            "POST",
+            path="folder_files",
+            json={"folder_id": int(folder_id), "file_id": int(file_id)},
+            prefer="resolution=ignore-duplicates,return=minimal",
+        )
+
+    async def files_in_folder(self, folder_id: str) -> list[StoredFile]:
+        response = await self._request(
+            "GET",
+            path="folder_files",
+            params={
+                "select": "file_id,files(*)",
+                "folder_id": f"eq.{folder_id}",
+                "order": "created_at.desc",
+            },
+        )
+        files: list[StoredFile] = []
+        for row in self._rows(response):
+            payload = row.get("files")
+            if isinstance(payload, dict):
+                files.append(StoredFile.from_row(payload))
+        return files
+
+    async def folders_of_file(self, file_id: str) -> list[str]:
+        response = await self._request(
+            "GET",
+            path="folder_files",
+            params={"select": "folders(name)", "file_id": f"eq.{file_id}"},
+        )
+        names = []
+        for row in self._rows(response):
+            payload = row.get("folders")
+            if isinstance(payload, dict) and payload.get("name"):
+                names.append(str(payload["name"]))
+        return sorted(names)
 
     async def close(self) -> None:
         if self._owns_client:
