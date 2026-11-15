@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import BTN_SEARCH, MenuCB, SearchCB, main_menu_kb
+from src.bot.keyboards import BTN_SEARCH, MenuCB, SearchCB
 from src.bot.states import SearchStates
 from src.services.container import Services
 
@@ -82,8 +82,10 @@ async def search_page_callback(
 
 @router.callback_query(SearchCB.filter(F.action == "cancel"))
 async def search_cancel_callback(
-    callback: CallbackQuery, state: FSMContext, bot
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
     await views.reset_flow(state, keep_nav=False)
-    await state.update_data(trail=[], screen_key=dict(navigation.MAIN))
-    await views.set_screen_cb(callback, state, views.welcome_text(), main_menu_kb())
+    await state.update_data(trail=[])
+    await navigation.navigate_callback(
+        callback, state, bot, services, navigation.MAIN, push=False
+    )
