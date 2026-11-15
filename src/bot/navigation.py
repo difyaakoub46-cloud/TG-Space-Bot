@@ -50,8 +50,10 @@ async def build(
     if kind == "categories":
         totals = await services.files.category_totals()
         folders = await services.files.folders(int(screen.get("u") or 0))
-        return views.categories_text(totals, len(folders)), categories_kb(
-            totals, len(folders)
+        favorites = [folder for folder in folders if folder.favorite]
+        return (
+            views.categories_text(totals, favorites, len(folders)),
+            categories_kb(totals, favorites, len(folders)),
         )
 
     if kind == "category":
@@ -92,7 +94,7 @@ async def build(
             files = await services.files.folder_files(folder.id)
             return (
                 views.folder_text(folder, files),
-                folder_files_kb(files, folder.id),
+                folder_files_kb(files, folder.id, folder.favorite),
             )
 
     if kind == "folder_delete":
