@@ -1,25 +1,99 @@
 #!/usr/bin/env python3
-"""TG-Space-Bot entry point."""
+"""TG-Space-Bot entry point: polling bot + FastAPI keep-alive server."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+
+import uvicorn
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from src.bot.dispatcher import build_dispatcher
 from src.core.config import Settings
 from src.core.logging import setup_logging
+from src.services.container import build_services
+from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
+
+
+def start_keepalive_server(settings: Settings) -> threading.Thread:
+    """Serve the health endpoints in a daemon thread (Render / UptimeRobot)."""
+    app = create_app()
+
+    def _serve() -> None:
+        try:
+            uvicorn.run(
+                app,
+                host=settings.server_host,
+                port=settings.server_port,
+                log_level="warning",
+                access_log=False,
+            )
+        except Exception:  # noqa: BLE001 - keep polling alive even if HTTP fails
+            logger.exception("Keep-alive HTTP server stopped unexpectedly")
+
+    thread = threading.Thread(target=_serve, name="keepalive", daemon=True)
+    thread.start()
+    return thread
+
+
+async def run_bot(settings: Settings, services, dispatcher) -> None:
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    services.bind_bot(bot)
+
+    configured = services.settings.storage_chats()
+    if not configured:
+        logger.warning(
+            "No storage groups configured: set TG_STORAGE_CHAT_<CATEGORY> "
+            "variables before uploading files."
+        )
+    else:
+        logger.info(
+            "Storage groups configured for: %s",
+            ", ".join(category.value for category in configured),
+        )
+        try:
+            await services.storage.verify_chats()
+        except Exception:  # noqa: BLE001 - startup must not fail on a bad chat id
+            logger.exception("Could not verify storage groups")
+
+    try:
+        logger.info("Starting long polling")
+        await dispatcher.start_polling(
+            bot, allowed_updates=dispatcher.resolve_used_update_types()
+        )
+    finally:
+        await bot.session.close()
+        await services.repository.close()
 
 
 def main() -> None:
     settings = Settings()
     setup_logging(settings)
 
+    services = build_services(settings)
+    dispatcher = build_dispatcher(services)
+
     logger.info("Starting TG-Space-Bot")
-    dispatcher = build_dispatcher(settings)
-    asyncio.run(dispatcher.start_polling(settings.bot_token))
+    start_keepalive_server(settings)
+    logger.info(
+        "Keep-alive HTTP server: http://%s:%s/health",
+        settings.server_host,
+        settings.server_port,
+    )
+
+    try:
+        asyncio.run(run_bot(settings, services, dispatcher))
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped")
 
 
 if __name__ == "__main__":
