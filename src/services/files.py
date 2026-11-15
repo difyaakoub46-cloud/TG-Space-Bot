@@ -8,7 +8,7 @@ from typing import Any
 from aiogram.types import Message
 
 from src.core.config import Settings
-from src.db.models import StoredFile
+from src.db.models import Folder, StoredFile
 from src.db.repository import FileRepository
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
@@ -109,6 +109,28 @@ class FileStorageServices:
             record.storage_chat_id, record.storage_message_id, target_chat_id
         )
         return message_id
+
+    async def rename(self, file_id: str, name: str) -> StoredFile | None:
+        """Rename a file in the library (the Telegram copy keeps its own name)."""
+        return await self._repository.rename(file_id, name)
+
+    async def folders(self, user_id: int) -> list[Folder]:
+        return await self._repository.list_folders(user_id)
+
+    async def folder(self, folder_id: str, user_id: int) -> Folder | None:
+        return await self._repository.get_folder(folder_id, user_id)
+
+    async def create_folder(self, user_id: int, name: str) -> Folder:
+        return await self._repository.create_folder(user_id, name)
+
+    async def folder_files(self, folder_id: str) -> list[StoredFile]:
+        return await self._repository.files_in_folder(folder_id)
+
+    async def add_to_folder(self, folder_id: str, file_id: str) -> None:
+        await self._repository.add_to_folder(folder_id, file_id)
+
+    async def file_folders(self, file_id: str) -> list[str]:
+        return await self._repository.folders_of_file(file_id)
 
     async def delete(self, file_id: str) -> bool:
         """Delete the stored Telegram copy and its metadata row."""

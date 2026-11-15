@@ -21,6 +21,15 @@ def _parse_datetime(value: Any) -> datetime:
 
 
 @dataclass(frozen=True, slots=True)
+class Folder:
+    """A virtual folder: a label over files that stay in their storage groups."""
+
+    id: str
+    name: str
+    count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class StoredFile:
     """A file tracked in Supabase and physically stored in a Telegram group."""
 
