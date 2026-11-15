@@ -35,6 +35,16 @@ CATEGORY_LABELS: dict[FileCategory, str] = {
     FileCategory.other: "📦 أخرى",
 }
 
+# The order of the category buttons (and of their lines) on the library screen.
+CATEGORY_ORDER: tuple[FileCategory, ...] = (
+    FileCategory.image,
+    FileCategory.video,
+    FileCategory.document,
+    FileCategory.audio,
+    FileCategory.archive,
+    FileCategory.other,
+)
+
 
 def category_label(category: FileCategory | str) -> str:
     if isinstance(category, FileCategory):
@@ -287,12 +297,13 @@ def stats_text(stats: Mapping[str, Any]) -> str:
 
 def categories_text(
     totals: Mapping[FileCategory, tuple[int, int]],
+    favorites: Sequence[Folder] = (),
     folder_count: int = 0,
 ) -> str:
-    """The library: every category with its count and total size.
+    """The library: the categories, then the favourite folders, then the rest.
 
-    The folders keep their own screen, where they are sorted alphabetically and
-    paged, so repeating them here only crowded the keyboard.
+    The full folder list keeps its own screen, where it is sorted alphabetically
+    and paged, so only the favourites appear here.
     """
     total_files = sum(count for count, _size in totals.values())
     total_bytes = sum(size for _count, size in totals.values())
@@ -305,16 +316,32 @@ def categories_text(
         "",
         "<b>الفئات</b>",
     ]
-    for category, (count, size) in totals.items():
+    ordered = [category for category in CATEGORY_ORDER if category in totals]
+    ordered += [category for category in totals if category not in ordered]
+    for category in ordered:
+        count, size = totals[category]
         lines.append(
             f"{category_label(category)} — {format_number(count)} ملف · "
             f"{_escape(human_total(size))}"
         )
 
     lines.append("")
+    if favorites:
+        lines.append("<b>⭐ المجلدات المفضلة</b>")
+        for folder in favorites:
+            lines.append(
+                f"⭐ {_escape(folder.name)} — "
+                f"{format_number(folder.count)} ملف"
+            )
+    else:
+        lines.append(
+            "⭐ لا توجد مجلدات مفضلة — افتح أي مجلد ثم اضغط "
+            "«⭐ إضافة إلى المفضلة» ليظهر هنا."
+        )
+    lines.append("")
     lines.append(
         f"📁 المجلدات: {format_number(folder_count)} — "
-        "افتحها بزر «📁 المجلدات»."
+        "افتح القائمة الكاملة بزر «📁 المجلدات»."
     )
     return "\n".join(lines)
 
@@ -411,8 +438,9 @@ def folders_text(
         lines.append("اختر مجلداً لعرض ملفاته:")
         lines.append("")
         for folder in folders:
+            star = "⭐" if folder.favorite else "📁"
             lines.append(
-                f"📁 <b>{_escape(folder.name)}</b> — "
+                f"{star} <b>{_escape(folder.name)}</b> — "
                 f"{format_number(folder.count)} ملف · "
                 f"{_escape(human_total(folder.bytes))}"
             )
@@ -443,6 +471,8 @@ def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
     lines = [
         f"📁 <b>{_escape(folder.name)}</b> — {format_number(count)} ملف · "
         f"{_escape(human_total(size))}",
+        "",
+        "⭐ في المفضلة" if folder.favorite else "⭐ ليست في المفضلة",
         "",
     ]
     if files:
