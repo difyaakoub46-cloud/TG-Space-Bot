@@ -20,7 +20,10 @@ from src.bot.keyboards import (
     categories_kb,
     category_files_kb,
     file_actions_kb,
+    folder_files_kb,
+    folders_kb,
     main_menu_kb,
+    pick_folder_kb,
     search_list_kb,
     search_prompt_kb,
 )
@@ -53,7 +56,29 @@ async def build(
     if kind == "file":
         record = await services.files.get(str(screen.get("id") or ""))
         if record is not None:
-            return views.file_text(record), file_actions_kb(record.id)
+            folders = await services.files.file_folders(record.id)
+            return views.file_text(record, folders), file_actions_kb(record.id)
+
+    if kind == "folders":
+        folders = await services.files.folders(int(screen.get("u") or 0))
+        return views.folders_text(folders), folders_kb(folders)
+
+    if kind == "folder":
+        folder = await services.files.folder(
+            str(screen.get("id") or ""), int(screen.get("u") or 0)
+        )
+        if folder is not None:
+            files = await services.files.folder_files(folder.id)
+            return views.folder_text(folder, files), folder_files_kb(files)
+
+    if kind == "pick_folder":
+        record = await services.files.get(str(screen.get("file") or ""))
+        if record is not None:
+            folders = await services.files.folders(int(screen.get("u") or 0))
+            return views.pick_folder_text(record), pick_folder_kb(folders)
+
+    if kind == "new_folder":
+        return views.new_folder_text(), back_to_menu_kb()
 
     if kind == "search_prompt":
         return views.search_prompt_text(), search_prompt_kb()
