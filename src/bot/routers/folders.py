@@ -2,10 +2,14 @@
 
 A folder is only a label over rows of the ``files`` table; the file itself stays in
 its Telegram storage group, so deleting a folder never deletes a file.
+
+Folders are created once and never renamed: the name is the folder's identity, and
+the list is always sorted alphabetically and paged.
 """
 
 from __future__ import annotations
 
+import html
 import logging
 
 from aiogram import F, Router
@@ -34,8 +38,8 @@ def _duplicate(exc: SupabaseError) -> bool:
     return "23505" in text or "duplicate key" in text.lower()
 
 
-def _folders_key(user_id: int) -> dict[str, object]:
-    return {"k": "folders", "u": user_id}
+def _folders_key(user_id: int, page: int = 1) -> dict[str, object]:
+    return {"k": "folders", "u": user_id, "p": max(1, page)}
 
 
 def _folder_key(user_id: int, folder_id: str) -> dict[str, object]:
@@ -50,6 +54,34 @@ async def menu_folders_callback(
     await navigation.navigate_callback(
         callback, state, bot, services, _folders_key(_user_id(callback))
     )
+
+
+@router.callback_query(FolderCB.filter(F.action == "page"))
+async def folders_page_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Move to another page of the alphabetically sorted folder list."""
+    data = FolderCB.unpack(callback.data)
+    try:
+        page = max(1, int(data.value))
+    except (TypeError, ValueError):
+        page = 1
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        _folders_key(_user_id(callback), page),
+        push=False,
+    )
+
+
+@router.callback_query(FolderCB.filter(F.action == "noop"))
+async def folders_page_indicator_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """The page number button only acknowledges the tap."""
+    await callback.answer()
 
 
 @router.callback_query(FolderCB.filter(F.action == "open"))
@@ -93,6 +125,56 @@ async def folder_put_callback(
         _folder_key(_user_id(callback), folder.id),
         notice=f"✅ أُضيف الملف إلى مجلد «{folder.name}».\n\n"
         + views.folder_text(folder, files),
+    )
+
+
+@router.callback_query(FolderCB.filter(F.action == "delete"))
+async def folder_delete_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Ask before deleting the label; files are never part of this action."""
+    data = FolderCB.unpack(callback.data)
+    folder = await services.files.folder(data.value, _user_id(callback))
+    if folder is None:
+        await callback.answer("المجلد غير موجود.", show_alert=True)
+        return
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "folder_delete", "u": _user_id(callback), "id": folder.id},
+        push=False,
+    )
+
+
+@router.callback_query(FolderCB.filter(F.action == "confirm_delete"))
+async def folder_delete_confirm_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Delete the folder row only: every file stays in the library."""
+    data = FolderCB.unpack(callback.data)
+    user_id = _user_id(callback)
+    folder = await services.files.folder(data.value, user_id)
+    name = folder.name if folder is not None else ""
+
+    if not await services.files.delete_folder(data.value, user_id):
+        await callback.answer("تعذّر حذف المجلد، حاول مرة أخرى.", show_alert=True)
+        return
+
+    await state.update_data(folder_file_id=None)
+    logger.info("Deleted the folder %s of user %s (files kept)", data.value, user_id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        _folders_key(user_id),
+        notice=(
+            f"✅ حُذف المجلد «{html.escape(name, quote=False)}».\n\n"
+            "جميع الملفات التي كانت فيه باقية في المكتبة وفي مجموعات التخزين."
+        ),
+        push=False,
     )
 
 
