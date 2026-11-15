@@ -22,7 +22,7 @@ BTN_MAIN = "🔙 القائمة الرئيسية"
 BTN_BACK = "↩️ رجوع"
 BTN_FOLDERS = "📁 المجلدات"
 BTN_NEW_FOLDER = "➕ مجلد جديد"
-BTN_JOIN = "🔐 انضمام للمجموعات"
+BTN_JOIN = "🔗 انضمام للمجموعات"
 
 _MAX_BUTTON_TEXT = 55
 
