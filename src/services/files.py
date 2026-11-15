@@ -119,6 +119,7 @@ class FileStorageServices:
         return await self._repository.rename(file_id, name)
 
     async def folders(self, user_id: int) -> list[Folder]:
+        """Folders of one user, always in case-insensitive alphabetical order."""
         return await self._repository.list_folders(user_id)
 
     async def folder(self, folder_id: str, user_id: int) -> Folder | None:
@@ -129,6 +130,10 @@ class FileStorageServices:
 
     async def folder_files(self, folder_id: str) -> list[StoredFile]:
         return await self._repository.files_in_folder(folder_id)
+
+    async def delete_folder(self, folder_id: str, user_id: int) -> bool:
+        """Remove the folder label only: its files are kept in the library."""
+        return await self._repository.delete_folder(folder_id, user_id)
 
     async def add_to_folder(self, folder_id: str, file_id: str) -> None:
         await self._repository.add_to_folder(folder_id, file_id)
