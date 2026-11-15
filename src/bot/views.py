@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -16,6 +17,8 @@ from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size
 
 _NOT_MODIFIED = "message is not modified"
+
+logger = logging.getLogger(__name__)
 
 CATEGORY_LABELS: dict[FileCategory, str] = {
     FileCategory.document: "📄 مستندات",
@@ -108,6 +111,25 @@ async def set_screen(
     await state.update_data(screen_message_id=sent.message_id)
 
 
+async def _safe_answer(
+    callback: CallbackQuery, text: str | None = None, alert: bool = False
+) -> None:
+    """Acknowledge a button press.
+
+    Telegram rejects the acknowledgement of a query older than a few minutes (it
+    answers ``query is too old``), which happens whenever a button from before a
+    bot restart is pressed. The screen itself is already rendered at that point,
+    so a failed acknowledgement must never surface as a user-visible error.
+    """
+    try:
+        if text is None:
+            await callback.answer()
+        else:
+            await callback.answer(text, show_alert=alert)
+    except TelegramAPIError:
+        logger.debug("Could not acknowledge a stale callback query", exc_info=True)
+
+
 async def set_screen_cb(
     callback: CallbackQuery,
     state: FSMContext,
@@ -116,7 +138,7 @@ async def set_screen_cb(
 ) -> None:
     """Same as :func:`set_screen` for callback queries, then clears the spinner."""
     if callback.message is None:
-        await callback.answer("انتهت صلاحية هذه الرسالة، استخدم /start.", show_alert=True)
+        await _safe_answer(callback, "انتهت صلاحية هذه الرسالة، استخدم /start.", True)
         return
 
     bot = callback.bot
@@ -124,7 +146,7 @@ async def set_screen_cb(
     screen_id = (await state.get_data()).get("screen_message_id")
 
     if screen_id and await _render_screen(bot, chat_id, screen_id, text, reply_markup):
-        await callback.answer()
+        await _safe_answer(callback)
         return
 
     if screen_id:
@@ -135,14 +157,14 @@ async def set_screen_cb(
         bot, chat_id, callback.message.message_id, text, reply_markup
     ):
         await state.update_data(screen_message_id=callback.message.message_id)
-        await callback.answer()
+        await _safe_answer(callback)
         return
 
     sent = await callback.message.answer(
         text, reply_markup=reply_markup, disable_web_page_preview=True
     )
     await state.update_data(screen_message_id=sent.message_id)
-    await callback.answer()
+    await _safe_answer(callback)
 
 
 # --------------------------------------------------------------------------- #
