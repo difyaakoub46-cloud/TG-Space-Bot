@@ -18,6 +18,11 @@ from src.utils.formatters import format_number, human_size
 
 _NOT_MODIFIED = "message is not modified"
 _MAX_TRACKED_MESSAGES = 100
+# When the main menu is opened, everything in the recent window is removed as
+# well: after a restart the bot no longer knows the ids of older messages, so the
+# window is what guarantees that delivered and uploaded files really disappear.
+_WIPE_WINDOW = 80
+_MAX_IDS_PER_CALL = 100
 
 logger = logging.getLogger(__name__)
 
@@ -67,17 +72,39 @@ async def remember(state: FSMContext, *message_ids: int) -> None:
     await state.update_data(cleanup_ids=tracked[-_MAX_TRACKED_MESSAGES:])
 
 
-async def clear_tracked(bot: Bot, chat_id: int, state: FSMContext) -> None:
+async def _delete_many(bot: Bot, chat_id: int, message_ids: Sequence[int]) -> None:
+    """Delete a list of messages in as few requests as possible."""
+    ids = [int(mid) for mid in message_ids if mid]
+    for start in range(0, len(ids), _MAX_IDS_PER_CALL):
+        chunk = ids[start : start + _MAX_IDS_PER_CALL]
+        if len(chunk) == 1:
+            await delete_screen_message(bot, chat_id, chunk[0])
+            continue
+        try:
+            await bot.delete_messages(chat_id=chat_id, message_ids=chunk)
+        except TelegramAPIError:
+            # Mixed batches (already deleted, too old, foreign) may be rejected as
+            # a whole; fall back to removing them one by one.
+            for message_id in chunk:
+                await delete_screen_message(bot, chat_id, message_id)
+
+
+async def clear_tracked(
+    bot: Bot, chat_id: int, state: FSMContext, upto: int | None = None
+) -> None:
     """Delete every tracked message of this chat, leaving an empty log."""
     data = await state.get_data()
-    tracked = list(dict.fromkeys(data.get("cleanup_ids") or []))
+    tracked = {int(mid) for mid in (data.get("cleanup_ids") or []) if mid}
     screen_id = data.get("screen_message_id")
-    if screen_id and screen_id not in tracked:
-        tracked.append(screen_id)
+    if screen_id:
+        tracked.add(int(screen_id))
 
-    for message_id in tracked:
-        await delete_screen_message(bot, chat_id, message_id)
+    if upto:
+        upto = int(upto)
+        tracked.add(upto)
+        tracked.update(range(max(1, upto - _WIPE_WINDOW + 1), upto + 1))
 
+    await _delete_many(bot, chat_id, sorted(tracked))
     await state.update_data(cleanup_ids=[], screen_message_id=None)
 
 
@@ -106,16 +133,18 @@ async def _render_screen(
         return False
 
 
-async def reset_flow(state: FSMContext) -> None:
-    """End the current workflow, keeping the screen and the cleanup list."""
+async def reset_flow(state: FSMContext, *, keep_nav: bool = True) -> None:
+    """End the current workflow, keeping the screen, the cleanup list and the trail."""
     data = await state.get_data()
-    screen_id = data.get("screen_message_id")
-    cleanup_ids = data.get("cleanup_ids")
+    kept = {
+        "screen_message_id": data.get("screen_message_id"),
+        "cleanup_ids": data.get("cleanup_ids"),
+    }
+    if keep_nav:
+        kept["trail"] = data.get("trail")
+        kept["screen_key"] = data.get("screen_key")
     await state.clear()
-    if screen_id:
-        await state.update_data(screen_message_id=screen_id)
-    if cleanup_ids:
-        await state.update_data(cleanup_ids=cleanup_ids)
+    await state.update_data(**{name: value for name, value in kept.items() if value})
 
 
 async def set_screen(
