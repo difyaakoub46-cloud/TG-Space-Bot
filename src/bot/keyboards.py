@@ -138,16 +138,30 @@ def groups_kb(groups: Sequence[tuple[FileCategory, int]]) -> InlineKeyboardMarku
 
 def categories_kb(
     totals: Mapping[FileCategory, tuple[int, int]],
+    favorites: Sequence[Folder] = (),
     folder_count: int = 0,
 ) -> InlineKeyboardMarkup:
-    """Library keyboard: the categories, then one button to the folder screen."""
+    """Library keyboard: categories, then favourite folders, then all folders."""
     builder = InlineKeyboardBuilder()
-    for category, (count, _size) in totals.items():
+    # The order lives in views so the text and the buttons always agree.
+    for category in views.CATEGORY_ORDER:
+        if category not in totals:
+            continue
+        count = totals[category][0]
         builder.button(
             text=f"{views.category_label(category)} ({format_number(count)})",
             callback_data=CategoryCB(name=category.value).pack(),
         )
     builder.adjust(2)
+
+    # One tap per favourite folder, right under the categories.
+    for folder in favorites:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"⭐ {_short(folder.name, 30)}",
+                callback_data=FolderCB(action="open", value=folder.id).pack(),
+            )
+        )
 
     builder.row(
         InlineKeyboardButton(
@@ -157,11 +171,6 @@ def categories_kb(
                 else BTN_FOLDERS
             ),
             callback_data=MenuCB(action="folders").pack(),
-        )
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
         )
     )
     builder.row(*nav_row())
@@ -214,8 +223,9 @@ def folders_kb(
     """One page of folders plus first/previous/next/last navigation."""
     builder = InlineKeyboardBuilder()
     for folder in folders:
+        star = "⭐" if folder.favorite else "📁"
         builder.button(
-            text=f"📁 {_short(folder.name, 25)} ({format_number(folder.count)})",
+            text=f"{star} {_short(folder.name, 25)} ({format_number(folder.count)})",
             callback_data=FolderCB(action="open", value=folder.id).pack(),
         )
     builder.adjust(2)
@@ -269,7 +279,9 @@ def folders_kb(
 
 
 def folder_files_kb(
-    files: Sequence[StoredFile], folder_id: str | None = None
+    files: Sequence[StoredFile],
+    folder_id: str | None = None,
+    favorite: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
@@ -279,6 +291,19 @@ def folder_files_kb(
         )
     builder.adjust(1)
     if folder_id:
+        builder.row(
+            InlineKeyboardButton(
+                text=(
+                    "🌟 إزالة من المفضلة"
+                    if favorite
+                    else "⭐ إضافة إلى المفضلة"
+                ),
+                callback_data=FolderCB(
+                    action="unfavorite" if favorite else "favorite",
+                    value=folder_id,
+                ).pack(),
+            )
+        )
         builder.row(
             InlineKeyboardButton(
                 text="🗑 حذف المجلد",
