@@ -21,6 +21,7 @@ from src.bot.keyboards import FolderCB, MenuCB
 from src.bot.states import FolderStates
 from src.db.repository import SupabaseError
 from src.services.container import Services
+from src.utils.sorting import SortSpec
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,20 @@ def _folders_key(user_id: int, page: int = 1) -> dict[str, object]:
 
 def _folder_key(user_id: int, folder_id: str) -> dict[str, object]:
     return {"k": "folder", "u": user_id, "id": folder_id}
+
+
+async def _open_folder(
+    state: FSMContext, user_id: int, folder_id: str
+) -> tuple[dict[str, object], SortSpec]:
+    """The folder screen, keeping the sorting the user chose for this folder."""
+    screen = _folder_key(user_id, folder_id)
+    stored = (await state.get_data()).get("screen_key") or {}
+    if stored.get("k") == "folder" and stored.get("id") == folder_id:
+        spec = SortSpec.from_screen(stored)
+        screen.update(spec.to_screen())
+    else:
+        spec = SortSpec()
+    return screen, spec
 
 
 @router.callback_query(MenuCB.filter(F.action == "folders"))
@@ -116,15 +131,16 @@ async def folder_put_callback(
 
     await services.files.add_to_folder(folder.id, str(file_id))
     await state.update_data(folder_file_id=None)
-    files = await services.files.folder_files(folder.id)
+    screen, sort = await _open_folder(state, _user_id(callback), folder.id)
+    files = await services.files.folder_files(folder.id, sort)
     await navigation.navigate_callback(
         callback,
         state,
         bot,
         services,
-        _folder_key(_user_id(callback), folder.id),
+        screen,
         notice=f"✅ أُضيف الملف إلى مجلد «{folder.name}».\n\n"
-        + views.folder_text(folder, files),
+        + views.folder_text(folder, files, sort),
     )
 
 
@@ -152,7 +168,8 @@ async def folder_move_callback(
         ),
         1,
     )
-    files = await services.files.folder_files(folder.id)
+    screen, sort = await _open_folder(state, user_id, folder.id)
+    files = await services.files.folder_files(folder.id, sort)
     notice = (
         f"✅ صار «{folder.name}» في الموضع {position} من {len(favorites)} "
         "في المجلدات المفضلة."
@@ -162,8 +179,8 @@ async def folder_move_callback(
         state,
         bot,
         services,
-        _folder_key(user_id, folder.id),
-        notice=notice + "\n\n" + views.folder_text(folder, files),
+        screen,
+        notice=notice + "\n\n" + views.folder_text(folder, files, sort),
         push=False,
     )
 
@@ -183,7 +200,8 @@ async def folder_favorite_callback(
         await callback.answer("المجلد غير موجود.", show_alert=True)
         return
 
-    files = await services.files.folder_files(folder.id)
+    screen, sort = await _open_folder(state, user_id, folder.id)
+    files = await services.files.folder_files(folder.id, sort)
     notice = (
         "⭐ أُضيف المجلد إلى المفضلة، وصار يظهر في شاشة المكتبة."
         if favorite
@@ -194,8 +212,8 @@ async def folder_favorite_callback(
         state,
         bot,
         services,
-        _folder_key(user_id, folder.id),
-        notice=notice + "\n\n" + views.folder_text(folder, files),
+        screen,
+        notice=notice + "\n\n" + views.folder_text(folder, files, sort),
         push=False,
     )
 
