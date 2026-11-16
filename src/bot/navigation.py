@@ -46,6 +46,14 @@ JOIN_FALLBACK = "fallback"
 MAIN: dict[str, object] = {"k": "main"}
 
 
+def _page(screen: dict[str, object]) -> int:
+    """The page kept in a screen key, defaulting to the first one."""
+    try:
+        return max(1, int(screen.get("p") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 async def build(
     services: Services, screen: dict[str, object] | None
 ) -> tuple[str, InlineKeyboardMarkup]:
@@ -68,11 +76,17 @@ async def build(
     if kind == "category":
         category = parse_category(str(screen.get("name") or ""))
         sort = SortSpec.from_screen(screen)
+        per_page = services.settings.results_per_page()
+        files, total, page = await services.files.category_page(
+            category, sort, page=_page(screen), per_page=per_page
+        )
+        pages = max(1, -(-total // per_page))
         totals = await services.files.category_totals()
-        files = await services.files.by_category(category, sort)
         return (
-            views.category_text(category, files, totals.get(category), sort),
-            category_files_kb(files, category, sort),
+            views.category_text(
+                category, files, totals.get(category), sort, page, pages
+            ),
+            category_files_kb(files, category, sort, page, pages),
         )
 
     if kind == "file":
@@ -85,10 +99,7 @@ async def build(
         folders = await services.files.folders(int(screen.get("u") or 0))
         per_page = services.settings.results_per_page()
         total_pages = max(1, -(-len(folders) // per_page))
-        try:
-            page = max(1, min(int(screen.get("p") or 1), total_pages))
-        except (TypeError, ValueError):
-            page = 1
+        page = min(_page(screen), total_pages)
         start = (page - 1) * per_page
         items = folders[start : start + per_page]
         return (
@@ -135,10 +146,7 @@ async def build(
         results = await services.files.search(query)
         per_page = services.settings.results_per_page()
         pages = max(1, -(-len(results) // per_page))
-        try:
-            page = max(1, min(int(screen.get("p") or 1), pages))
-        except (TypeError, ValueError):
-            page = 1
+        page = min(_page(screen), pages)
         start = (page - 1) * per_page
         items = results[start : start + per_page]
         return (

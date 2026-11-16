@@ -39,14 +39,20 @@ Callback data is typed with `CallbackData` factories in `src/bot/keyboards.py`
 (`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`, `FolderCB`, `JoinCB`, `SortCB`), so
 routers filter and unpack it instead of parsing raw strings.
 
-## Sorting
+## Sorting and paging
 
 Inside a library category or a folder, «🔃 فرز / ترتيب» opens a panel with size,
 date and name orderings in both directions (the active one is marked ✅). The
 choice is kept in the screen key (`s` / `d`), so it survives opening a file and
-coming back, and the list is re-rendered with `edit_message_text`. Names are
-compared without Arabic diacritics and with the alef/ya variants folded, so
-Arabic and Latin names sort as one alphabet.
+coming back, and the list is re-rendered with `edit_message_text`.
+
+A category is paged (one page per `PAGE_SIZE` files) and both the ordering and
+the slice are done by PostgREST, so the sort covers every file in the category
+and the last file of the library is reachable. The page lives in the screen key
+(`p`) next to the ordering, so opening a file and going back returns to the same
+page; changing the ordering restarts at page one because the pages are renumbered.
+Folder listings are short enough to be sorted in memory, where names are compared
+without Arabic diacritics and with the alef/ya variants folded.
 
 ## Files, duplicates and hashes
 
@@ -77,7 +83,7 @@ On Render:
 - Service type: **Web Service** (needs an open HTTP port).
 - Start command: `python main.py`.
 - Do not set `PORT`; Render injects it and the app reads it.
-- Add a UptimeRobot HTTP(s) monitor pointing at `https://<service>.onrender.com/health`
+- Add an UptimeRobot HTTP(s) monitor pointing at `https://<service>.onrender.com/health`
   with a 5-minute interval to keep the instance awake.
 
 The HTTP endpoints never touch Supabase or Telegram, so a ping cannot fail
