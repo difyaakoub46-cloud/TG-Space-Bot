@@ -29,6 +29,10 @@ def _sanitize_query(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()[:_MAX_QUERY_LENGTH]
 
 
+def _optional_int(value: Any) -> int | None:
+    return int(value) if value is not None else None
+
+
 def _parse_total(content_range: str | None) -> int:
     """Extract the total row count from a ``Content-Range`` header."""
     if not content_range or "/" not in content_range:
@@ -283,7 +287,7 @@ class FileRepository:
             "GET",
             path="folders",
             params={
-                "select": "id,name,is_favorite",
+                "select": "id,name,is_favorite,favorite_order",
                 "user_id": f"eq.{user_id}",
                 "order": "name.asc",
             },
@@ -296,6 +300,7 @@ class FileRepository:
                     id=str(row["id"]),
                     name=str(row["name"]),
                     favorite=bool(row.get("is_favorite")),
+                    favorite_order=_optional_int(row.get("favorite_order")),
                 )
                 for row in self._rows(response)
             ),
@@ -313,6 +318,7 @@ class FileRepository:
                 count=totals.get(folder.id, (0, 0))[0],
                 bytes=totals.get(folder.id, (0, 0))[1],
                 favorite=folder.favorite,
+                favorite_order=folder.favorite_order,
             )
             for folder in folders
         ]
@@ -370,7 +376,7 @@ class FileRepository:
             "GET",
             path="folders",
             params={
-                "select": "id,name,is_favorite",
+                "select": "id,name,is_favorite,favorite_order",
                 "id": f"eq.{folder_id}",
                 "user_id": f"eq.{user_id}",
                 "limit": "1",
@@ -383,6 +389,7 @@ class FileRepository:
             id=str(rows[0]["id"]),
             name=str(rows[0]["name"]),
             favorite=bool(rows[0].get("is_favorite")),
+            favorite_order=_optional_int(rows[0].get("favorite_order")),
         )
         totals = await self._folder_totals(f"eq.{folder.id}")
         count, size = totals.get(folder.id, (0, 0))
@@ -392,17 +399,34 @@ class FileRepository:
             count=count,
             bytes=size,
             favorite=folder.favorite,
+            favorite_order=folder.favorite_order,
         )
 
     async def set_folder_favorite(
-        self, folder_id: str, user_id: int, favorite: bool
+        self,
+        folder_id: str,
+        user_id: int,
+        favorite: bool,
+        order: int | None = None,
     ) -> None:
-        """Star or unstar a folder; the name and the files are untouched."""
+        """Star or unstar a folder, and place it at ``order`` in the favourites."""
         await self._request(
             "PATCH",
             path="folders",
             params={"id": f"eq.{folder_id}", "user_id": f"eq.{user_id}"},
-            json={"is_favorite": favorite},
+            json={"is_favorite": favorite, "favorite_order": order},
+            prefer="return=minimal",
+        )
+
+    async def set_folder_order(
+        self, folder_id: str, user_id: int, order: int
+    ) -> None:
+        """Store the manual position of a favourite folder."""
+        await self._request(
+            "PATCH",
+            path="folders",
+            params={"id": f"eq.{folder_id}", "user_id": f"eq.{user_id}"},
+            json={"favorite_order": order},
             prefer="return=minimal",
         )
 
