@@ -67,6 +67,8 @@ async def sort_set_callback(
         return
 
     screen.update(SortSpec.parse(data.field, data.direction).to_screen())
+    # A new ordering renumbers every page, so the list starts again from the first.
+    screen["p"] = 1
     await navigation.navigate_callback(
         callback, state, bot, services, screen, push=False
     )

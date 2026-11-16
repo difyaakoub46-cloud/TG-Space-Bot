@@ -62,6 +62,7 @@ async def categories_callback(
 async def category_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
+    """Open a category; the page is kept in the screen key, not in the button."""
     data = CategoryCB.unpack(callback.data)
     category = parse_category(data.name)
     await navigation.navigate_callback(
@@ -69,7 +70,12 @@ async def category_callback(
         state,
         bot,
         services,
-        {"k": "category", "name": category.value},
+        {
+            "k": "category",
+            "name": category.value,
+            "p": max(1, int(data.page or 1)),
+        },
+        push=False,
     )
 
 
