@@ -99,8 +99,8 @@ def sort_menu_text(sort: SortSpec) -> str:
             f"الترتيب الحالي: <b>{sort_summary(sort)}</b>",
             "",
             "اختر ترتيباً؛ تتحدّث القائمة في مكانها دون إعادة فتحها.",
-            "ترتيب الاسم يتجاهل التشكيل وأشكال الألف في العربية، "
-            "ويرتّب الحروف اللاتينية جنباً إلى جنب.",
+            "الفرز يشمل كل ملفات الفئة لا الصفحة المعروضة، ويعود بك إلى "
+            "الصفحة الأولى لأن ترقيم الصفحات يتغيّر مع كل ترتيب.",
         ]
     )
 
@@ -401,8 +401,10 @@ def category_text(
     files: Sequence[StoredFile],
     totals: tuple[int, int] | None = None,
     sort: SortSpec | None = None,
+    page: int = 1,
+    pages: int = 1,
 ) -> str:
-    """One category: its file count and total size, then the files themselves."""
+    """One page of a category: totals, the ordering and where the page stands."""
     label = category_label(category)
     count, size = (
         totals
@@ -416,8 +418,10 @@ def category_text(
     if not files:
         lines.append("لا توجد ملفات في هذه الفئة.")
     else:
+        if pages > 1:
+            lines.append(f"📄 الصفحة {page} من {pages}")
         lines.append(f"🔃 الترتيب: {sort_summary(sort or SortSpec())}")
-        lines.append("اضغط «🔃 فرز / ترتيب» أدناه لتغيير طريقة العرض.")
+        lines.append("اختر ملفاً لعرضه، أو غيّر الترتيب من الزر أدناه.")
     return "\n".join(lines).rstrip()
 
 
