@@ -58,7 +58,7 @@ def _uptime(seconds: float) -> str:
 
 def _check_labels(check: StorageChatCheck) -> str:
     if check.is_fallback:
-        return "🛟 احتياطية"
+        return views.FALLBACK_LABEL
     if not check.categories:
         return "—"
     return "، ".join(

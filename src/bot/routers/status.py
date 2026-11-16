@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import BTN_STATUS, MenuCB, StatusCB
+from src.bot.keyboards import BTN_STATUS, MenuCB
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,7 @@ async def menu_status_callback(
     )
 
 
-@router.callback_query(StatusCB.filter(F.action == "check"))
-@router.callback_query(StatusCB.filter(F.action == "refresh"))
+@router.callback_query(MenuCB.filter(F.action == "status_check"))
 async def status_refresh_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:

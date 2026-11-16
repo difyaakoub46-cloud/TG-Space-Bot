@@ -21,7 +21,3 @@ delete from public.files f
 create unique index if not exists files_unique_file_id_idx
     on public.files (file_unique_id)
     where file_unique_id is not null;
-
-create index if not exists files_content_hash_idx
-    on public.files (content_hash)
-    where content_hash is not null;
