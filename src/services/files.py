@@ -21,8 +21,6 @@ from src.utils.sorting import SortSpec, database_order, sort_files
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
-# The cap of a category listing; the ordering is applied on the fetched rows.
-CATEGORY_FETCH_LIMIT = 300
 
 
 def _is_duplicate(exc: SupabaseError) -> bool:
@@ -169,20 +167,42 @@ class FileStorageServices:
         )
         return results
 
-    async def by_category(
+    async def category_page(
         self,
         category: FileCategory | str,
         sort: SortSpec | None = None,
-        limit: int = CATEGORY_FETCH_LIMIT,
-    ) -> list[StoredFile]:
-        """Files of one category, ordered by the requested sort."""
+        *,
+        page: int = 1,
+        per_page: int = 10,
+    ) -> tuple[list[StoredFile], int, int]:
+        """One page of a category: its files, the total, and the page shown.
+
+        Both the ordering and the slice are done by PostgREST, so every page is a
+        window on the *whole* category instead of a window on a fetched prefix: the
+        last file is reachable and the sort covers all of them.
+        """
         spec = sort or SortSpec()
-        results, _total = await self._repository.search(
-            category=parse_category(category),
-            limit=limit,
-            order=database_order(spec),
-        )
-        return sort_files(results, spec)
+        parsed = parse_category(category)
+        order = database_order(spec)
+        per_page = max(1, per_page)
+        page = max(1, page)
+
+        async def fetch(target: int) -> tuple[list[StoredFile], int]:
+            return await self._repository.search(
+                category=parsed,
+                limit=per_page,
+                offset=(target - 1) * per_page,
+                order=order,
+            )
+
+        files, total = await fetch(page)
+        last_page = max(1, -(-total // per_page))
+        if not files and page > last_page:
+            # The library shrank (or the page came from an older screen): show the
+            # last page that still has files instead of an empty list.
+            page = last_page
+            files, total = await fetch(page)
+        return files, total, page
 
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
