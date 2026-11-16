@@ -29,9 +29,12 @@ from src.bot.keyboards import (
     pick_folder_kb,
     search_list_kb,
     search_prompt_kb,
+    status_kb,
 )
+from src.bot.status import status_text
 from src.services.container import Services
 from src.utils.filetypes import parse_category
+from src.utils.sorting import SortSpec
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +64,12 @@ async def build(
 
     if kind == "category":
         category = parse_category(str(screen.get("name") or ""))
+        sort = SortSpec.from_screen(screen)
         totals = await services.files.category_totals()
-        files = await services.files.by_category(category)
+        files = await services.files.by_category(category, sort)
         return (
-            views.category_text(category, files, totals.get(category)),
-            category_files_kb(files, category),
+            views.category_text(category, files, totals.get(category), sort),
+            category_files_kb(files, category, sort),
         )
 
     if kind == "file":
@@ -94,10 +98,11 @@ async def build(
             str(screen.get("id") or ""), int(screen.get("u") or 0)
         )
         if folder is not None:
-            files = await services.files.folder_files(folder.id)
+            sort = SortSpec.from_screen(screen)
+            files = await services.files.folder_files(folder.id, sort)
             return (
-                views.folder_text(folder, files),
-                folder_files_kb(files, folder.id, folder.favorite),
+                views.folder_text(folder, files, sort),
+                folder_files_kb(files, folder.id, folder.favorite, sort),
             )
 
     if kind == "folder_delete":
@@ -140,6 +145,9 @@ async def build(
 
     if kind == "stats":
         return views.stats_text(await services.files.stats()), back_to_menu_kb()
+
+    if kind == "status":
+        return await status_text(services), status_kb()
 
     if kind == "help":
         return views.help_text(), help_kb()
