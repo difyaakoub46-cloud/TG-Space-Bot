@@ -40,13 +40,26 @@ def storage_check_text(
             f"✅ جاهزة: {format_number(len(ready))} من {format_number(len(checks))}"
         )
 
+    fallback_ok = next(
+        (check for check in checks if check.is_fallback and check.reachable), None
+    )
+    if fallback_ok is not None:
+        lines.append(
+            "🛟 المجموعة الاحتياطية مستخدمة للفئات غير المهيّأة "
+            f"(<code>{fallback_ok.chat_id}</code>)."
+        )
+
     if broken:
         lines.append("")
         lines.append("⛔ <b>مجموعات غير قابلة للوصول</b>")
         for check in broken:
-            labels = "، ".join(
-                category_label(category)
-                for category in sorted(check.categories, key=lambda item: item.value)
+            labels = (
+                "🛟 احتياطية"
+                if check.is_fallback
+                else "، ".join(
+                    category_label(category)
+                    for category in sorted(check.categories, key=lambda item: item.value)
+                )
             )
             lines.append(f"• {labels} — <code>{check.chat_id}</code>")
             if check.reason:

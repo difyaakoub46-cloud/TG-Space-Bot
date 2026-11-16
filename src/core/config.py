@@ -92,6 +92,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    # One group can back every category that has no TG_STORAGE_CHAT_* value, so an
+    # unconfigured category is stored there instead of refusing the upload.
+    storage_chat_fallback: OptionalChatId = Field(
+        None,
+        validation_alias=AliasChoices(
+            "TG_STORAGE_CHAT_FALLBACK",
+            "TG_STORAGE_CHAT_FALLBACK_ID",
+            "FALLBACK_STORAGE_CHAT",
+        ),
+    )
+
     # Optional extra id for the storage-group gate (see the access router); the
     # gate itself is driven by ALLOWED_USER_IDS alone, with no password step.
     owner_id: OptionalChatId = Field(
@@ -100,6 +111,11 @@ class Settings(BaseSettings):
     )
 
     request_timeout: float = 30.0
+    # Files larger than this are saved without a content fingerprint (Telegram
+    # does not let a bot download more than 20 MB anyway).
+    hash_max_bytes: int = Field(
+        20 * 1024 * 1024, validation_alias=AliasChoices("HASH_MAX_BYTES")
+    )
     log_level: str = Field("INFO", validation_alias=AliasChoices("LOG_LEVEL"))
     page_size: int = Field(
         DEFAULT_PAGE_SIZE, validation_alias=AliasChoices("PAGE_SIZE")
@@ -147,13 +163,24 @@ class Settings(BaseSettings):
         }
 
     def storage_chat_for(self, category: FileCategory) -> int:
+        """The group of one category, or the fallback group when it has none."""
         chat_id = self.storage_chats().get(category)
+        if chat_id is None:
+            chat_id = self.storage_chat_fallback
         if chat_id is None:
             raise ConfigurationError(
                 f"لا توجد مجموعة تخزين مهيأة للفئة «{category.value}». "
-                "أضف المتغير TG_STORAGE_CHAT_<CATEGORY> إلى إعدادات البيئة."
+                "أضف المتغير TG_STORAGE_CHAT_<CATEGORY> أو المجموعة الاحتياطية "
+                "TG_STORAGE_CHAT_FALLBACK إلى إعدادات البيئة."
             )
         return chat_id
+
+    def uncovered_categories(self) -> list[FileCategory]:
+        """Categories that cannot be stored even with the fallback in place."""
+        if self.storage_chat_fallback is not None:
+            return []
+        configured = self.storage_chats()
+        return [category for category in FileCategory if category not in configured]
 
 
 def load_settings(path: Path | None = None) -> Settings:
