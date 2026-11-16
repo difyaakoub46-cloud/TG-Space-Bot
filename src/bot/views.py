@@ -36,6 +36,9 @@ CATEGORY_LABELS: dict[FileCategory, str] = {
     FileCategory.other: "📦 أخرى",
 }
 
+# One label for the group that backs every category without its own id.
+FALLBACK_LABEL = "🛟 احتياطية"
+
 # The order of the category buttons (and of their lines) on the library screen.
 CATEGORY_ORDER: tuple[FileCategory, ...] = (
     FileCategory.image,
@@ -45,7 +48,6 @@ CATEGORY_ORDER: tuple[FileCategory, ...] = (
     FileCategory.archive,
     FileCategory.other,
 )
-
 
 # One readable line per selectable ordering; the buttons reuse the same wording.
 SORT_SUMMARIES: dict[tuple[SortField, SortDirection], str] = {
@@ -452,9 +454,7 @@ def search_results_text(
     return "\n".join(lines)
 
 
-def file_saved_text(
-    record: StoredFile, same_content: StoredFile | None = None
-) -> str:
+def file_saved_text(record: StoredFile) -> str:
     lines = [
         "✅ <b>تم حفظ الملف</b>",
         "",
@@ -464,12 +464,6 @@ def file_saved_text(
     ]
     if record.hash_short:
         lines.append(f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>")
-    if same_content is not None:
-        lines.append("")
-        lines.append(
-            "ℹ️ المحتوى مطابق لملف محفوظ سابقاً "
-            f"«{_escape(same_content.file_name)}» — حُفظ هذا كملف مستقل."
-        )
     return "\n".join(lines)
 
 
