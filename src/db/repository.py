@@ -151,6 +151,37 @@ class FileRepository:
         rows = self._rows(response)
         return StoredFile.from_row(rows[0]) if rows else None
 
+    async def find_by_unique_id(self, file_unique_id: str) -> StoredFile | None:
+        """The row already holding this exact Telegram file, if any."""
+        if not file_unique_id:
+            return None
+        response = await self._request(
+            "GET",
+            params={
+                "select": "*",
+                "file_unique_id": f"eq.{file_unique_id}",
+                "limit": "1",
+            },
+        )
+        rows = self._rows(response)
+        return StoredFile.from_row(rows[0]) if rows else None
+
+    async def find_by_content_hash(self, content_hash: str) -> StoredFile | None:
+        """A stored file with the same bytes (same fingerprint), if any."""
+        if not content_hash:
+            return None
+        response = await self._request(
+            "GET",
+            params={
+                "select": "*",
+                "content_hash": f"eq.{content_hash}",
+                "order": "created_at.asc",
+                "limit": "1",
+            },
+        )
+        rows = self._rows(response)
+        return StoredFile.from_row(rows[0]) if rows else None
+
     async def search(
         self,
         *,
@@ -158,10 +189,11 @@ class FileRepository:
         category: FileCategory | None = None,
         limit: int = 10,
         offset: int = 0,
+        order: str = "created_at.desc",
     ) -> tuple[list[StoredFile], int]:
         params: dict[str, str] = {
             "select": "*",
-            "order": "created_at.desc",
+            "order": order,
             "limit": str(limit),
             "offset": str(offset),
         }
