@@ -26,6 +26,7 @@ from src.bot.keyboards import (
     groups_kb,
     help_kb,
     main_menu_kb,
+    pending_kb,
     pick_folder_kb,
     search_list_kb,
     search_prompt_kb,
@@ -159,6 +160,19 @@ async def build(
 
     if kind == "status":
         return await status_text(services), status_kb()
+
+    if kind == "pending":
+        store = services.pending
+        latest = store.latest()
+        return (
+            views.pending_text(
+                store.total,
+                store.stats(),
+                latest.file_name if latest else None,
+                latest.reason if latest else None,
+            ),
+            pending_kb(store.total),
+        )
 
     if kind == "help":
         return views.help_text(), help_kb()
