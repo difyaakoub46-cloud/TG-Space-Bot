@@ -27,6 +27,8 @@ BTN_JOIN = "🔗 انضمام للمجموعات"
 BTN_STATUS = "🩺 الحالة العامة"
 BTN_STATUS_CHECK = "🔍 فحص المجموعات وتحديث الحالة"
 BTN_SORT = "🔃 فرز / ترتيب"
+BTN_PENDING = "🛟 الاحتياط"
+BTN_REPAIR = "🔧 إصلاح"
 
 _MAX_BUTTON_TEXT = 55
 
@@ -124,6 +126,11 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text=BTN_STATUS, callback_data=MenuCB(action="status").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_PENDING, callback_data=MenuCB(action="pending").pack()
         )
     )
     return builder.as_markup()
@@ -294,6 +301,19 @@ def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
             callback_data=SortCB(action="close").pack(),
         )
     )
+    return builder.as_markup()
+
+
+def pending_kb(total: int = 0) -> InlineKeyboardMarkup:
+    """The emergency screen: repair only makes sense when files are waiting."""
+    builder = InlineKeyboardBuilder()
+    if total:
+        builder.row(
+            InlineKeyboardButton(
+                text=BTN_REPAIR, callback_data=MenuCB(action="repair").pack()
+            )
+        )
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
