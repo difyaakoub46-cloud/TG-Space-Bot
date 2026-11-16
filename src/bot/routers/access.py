@@ -71,7 +71,11 @@ def _is_allowed(services: Services, user_id: int | None) -> bool:
 def _storage_ids(services: Services) -> set[int]:
     """Configured storage chats plus the supergroup ids learned for them."""
     ids: set[int] = set()
-    for chat_id in services.settings.storage_chats().values():
+    configured = list(services.settings.storage_chats().values())
+    fallback = services.settings.storage_chat_fallback
+    if fallback is not None:
+        configured.append(fallback)
+    for chat_id in configured:
         ids.add(int(chat_id))
         migrated = _MIGRATED.get(int(chat_id))
         if migrated is not None:
@@ -162,17 +166,25 @@ async def join_link_callback(
         return
 
     data = JoinCB.unpack(callback.data)
-    category = parse_category(data.value)
-    try:
-        chat_id = services.settings.storage_chat_for(category)
-    except ConfigurationError:
-        await _alert(callback, "⚠️ لا توجد مجموعة تخزين مهيّأة لهذه الفئة.")
-        return
+    if data.value == navigation.JOIN_FALLBACK:
+        chat_id = services.settings.storage_chat_fallback
+        if chat_id is None:
+            await _alert(callback, "⚠️ لا توجد مجموعة احتياطية مهيّأة.")
+            return
+        label = views.FALLBACK_LABEL
+        invite_name = "owner-fallback"
+    else:
+        category = parse_category(data.value)
+        try:
+            chat_id = services.settings.storage_chat_for(category)
+        except ConfigurationError:
+            await _alert(callback, "⚠️ لا توجد مجموعة تخزين مهيّأة لهذه الفئة.")
+            return
+        label = views.category_label(category)
+        invite_name = f"owner-{category.value}"[:32]
 
     try:
-        link, used_id, old_id = await _create_invite(
-            bot, chat_id, f"owner-{category.value}"[:32]
-        )
+        link, used_id, old_id = await _create_invite(bot, chat_id, invite_name)
     except TelegramMigrateToChat as exc:
         new_id = int(exc.migrate_to_chat_id)
         _remember_migration(int(chat_id), new_id)
@@ -192,8 +204,8 @@ async def join_link_callback(
         )
         return
 
-    logger.info("Created a one-time invite link for %s", category.value)
-    notice = views.invite_text(link.invite_link, views.category_label(category))
+    logger.info("Created a one-time invite link for %s", label)
+    notice = views.invite_text(link.invite_link, label)
     if old_id is not None:
         notice += (
             "\n\nℹ️ المجموعة ترقّت إلى «مجموعة عظمى». حدّث معرّفها في Render إلى "
