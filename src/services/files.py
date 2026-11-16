@@ -126,13 +126,49 @@ class FileStorageServices:
         return await self._repository.get_folder(folder_id, user_id)
 
     async def favorite_folders(self, user_id: int) -> list[Folder]:
-        """The shortcuts of the library screen, in the same alphabetical order."""
-        return [folder for folder in await self.folders(user_id) if folder.favorite]
+        """The shortcuts of the library screen, in their manual order.
+
+        A favourite without an explicit position keeps the alphabetical fallback,
+        so folders starred before the ordering existed still show up.
+        """
+        folders = [
+            folder for folder in await self.folders(user_id) if folder.favorite
+        ]
+        return sorted(folders, key=lambda folder: folder.favorite_sort_key)
 
     async def set_favorite(
         self, folder_id: str, user_id: int, favorite: bool
     ) -> Folder | None:
-        await self._repository.set_folder_favorite(folder_id, user_id, favorite)
+        """Star a folder at the end of the favourites, or unstar it."""
+        order: int | None = None
+        if favorite:
+            favorites = await self.favorite_folders(user_id)
+            order = max(
+                (folder.favorite_order or 0 for folder in favorites), default=-1
+            ) + 1
+
+        await self._repository.set_folder_favorite(
+            folder_id, user_id, favorite, order
+        )
+        return await self._repository.get_folder(folder_id, user_id)
+
+    async def move_favorite(
+        self, folder_id: str, user_id: int, step: int
+    ) -> Folder | None:
+        """Move a favourite one place up (``step=-1``) or down (``step=1``)."""
+        favorites = await self.favorite_folders(user_id)
+        ids = [folder.id for folder in favorites]
+        if folder_id not in ids:
+            return None
+
+        index = ids.index(folder_id)
+        target = max(0, min(index + step, len(favorites) - 1))
+        if target == index:
+            return await self._repository.get_folder(folder_id, user_id)
+
+        favorites[index], favorites[target] = favorites[target], favorites[index]
+        for position, folder in enumerate(favorites):
+            await self._repository.set_folder_order(folder.id, user_id, position)
         return await self._repository.get_folder(folder_id, user_id)
 
     async def create_folder(self, user_id: int, name: str) -> Folder:
