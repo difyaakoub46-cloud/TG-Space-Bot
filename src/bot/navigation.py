@@ -50,7 +50,10 @@ async def build(
     if kind == "categories":
         totals = await services.files.category_totals()
         folders = await services.files.folders(int(screen.get("u") or 0))
-        favorites = [folder for folder in folders if folder.favorite]
+        favorites = sorted(
+            (folder for folder in folders if folder.favorite),
+            key=lambda folder: folder.favorite_sort_key,
+        )
         return (
             views.categories_text(totals, favorites, len(folders)),
             categories_kb(totals, favorites, len(folders)),
