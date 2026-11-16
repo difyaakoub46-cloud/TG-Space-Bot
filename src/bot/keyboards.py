@@ -25,8 +25,7 @@ BTN_FOLDERS = "📁 المجلدات"
 BTN_NEW_FOLDER = "➕ مجلد جديد"
 BTN_JOIN = "🔗 انضمام للمجموعات"
 BTN_STATUS = "🩺 الحالة العامة"
-BTN_STATUS_CHECK = "🔍 فحص مجموعات التخزين"
-BTN_STATUS_REFRESH = "🔄 تحديث الحالة"
+BTN_STATUS_CHECK = "🔍 فحص المجموعات وتحديث الحالة"
 BTN_SORT = "🔃 فرز / ترتيب"
 
 _MAX_BUTTON_TEXT = 55
@@ -58,10 +57,6 @@ class FolderCB(CallbackData, prefix="fld"):
 class JoinCB(CallbackData, prefix="join"):
     action: str
     value: str = ""
-
-
-class StatusCB(CallbackData, prefix="sts"):
-    action: str
 
 
 class SortCB(CallbackData, prefix="srt"):
@@ -145,13 +140,13 @@ def help_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def groups_kb(groups: Sequence[tuple[FileCategory, int]]) -> InlineKeyboardMarkup:
-    """One button per configured storage group."""
+def groups_kb(groups: Sequence[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """One button per joinable group: ``(JoinCB value, button label)``."""
     builder = InlineKeyboardBuilder()
-    for category, _chat_id in groups:
+    for value, label in groups:
         builder.button(
-            text=views.category_label(category),
-            callback_data=JoinCB(action="link", value=category.value).pack(),
+            text=label,
+            callback_data=JoinCB(action="link", value=value).pack(),
         )
     builder.adjust(2)
     builder.row(*nav_row())
@@ -199,6 +194,14 @@ def categories_kb(
     return builder.as_markup()
 
 
+def _sort_button(sort: SortSpec) -> InlineKeyboardButton:
+    """The single entry point of the sorting panel."""
+    return InlineKeyboardButton(
+        text=f"{BTN_SORT} · {views.sort_short(sort)}",
+        callback_data=SortCB(action="menu").pack(),
+    )
+
+
 def category_files_kb(
     files: Sequence[StoredFile],
     category: FileCategory | str,
@@ -215,14 +218,6 @@ def category_files_kb(
         builder.row(_sort_button(sort or SortSpec()))
     builder.row(*nav_row())
     return builder.as_markup()
-
-
-def _sort_button(sort: SortSpec) -> InlineKeyboardButton:
-    """The single entry point of the sorting panel."""
-    return InlineKeyboardButton(
-        text=f"{BTN_SORT} · {views.sort_short(sort)}",
-        callback_data=SortCB(action="menu").pack(),
-    )
 
 
 def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
@@ -259,15 +254,13 @@ def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
 
 
 def status_kb() -> InlineKeyboardMarkup:
-    """General status: re-run the storage check or refresh every number."""
+    """General status: one button re-runs the check and refreshes every number."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text=BTN_STATUS_CHECK, callback_data=StatusCB(action="check").pack()
-        ),
-        InlineKeyboardButton(
-            text=BTN_STATUS_REFRESH, callback_data=StatusCB(action="refresh").pack()
-        ),
+            text=BTN_STATUS_CHECK,
+            callback_data=MenuCB(action="status_check").pack(),
+        )
     )
     builder.row(*nav_row())
     return builder.as_markup()
