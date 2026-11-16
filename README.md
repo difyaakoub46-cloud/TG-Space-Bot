@@ -63,8 +63,29 @@ twice shows «الملف موجود أصلاً» and stores no second copy. File
 two files with the same name but different content stay distinguishable.
 
 The «🩺 الحالة العامة» screen (and the startup report sent to `OWNER_ID`) reaches
-every configured group, including the fallback, and lists the ids the bot cannot
-use yet.
+every configured group, including the emergency one, and lists the ids the bot
+cannot use yet.
+
+## Emergency hold and repair
+
+`TG_STORAGE_CHAT_FALLBACK` is an **emergency store**, not a library group and not a
+backup of the other groups. A file is never left in the library without a row in
+Supabase:
+
+- The row is written after the copy, so if Supabase refuses the registration the
+  fresh copy is pulled back out of the library group.
+- The file is then copied into `TG_STORAGE_CHAT_FALLBACK` and recorded in a small
+  JSON registry (`PENDING_STORE_PATH`).
+- The «🛟 الاحتياط» section of the main menu shows how many files are waiting and
+  how they split by type, and «🔧 إصلاح» registers every one of them and copies it
+  into its category group, deleting the held copy only after its row exists.
+
+Telegram's Bot API cannot read a chat's history, so the registry — not the group —
+is what makes the repair possible. Point `PENDING_STORE_PATH` at a mounted Render
+disk to keep it across restarts; on an ephemeral path the files stay in the group
+but the list is lost. A file whose category has no `TG_STORAGE_CHAT_*` group is
+kept during repair until that group is configured, and a file already on record is
+recognised and its held copy removed.
 
 ## Keep-alive server (Render + UptimeRobot)
 
@@ -96,12 +117,17 @@ because of a database hiccup.
 - `TG_SPACE_BOT_WEBHOOK_URL` — reserved for a future webhook mode.
 - `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
   (leave empty to allow everybody).
-- `PAGE_SIZE` — search results per page (default `10`, capped at `20`).
-- `TG_STORAGE_CHAT_FALLBACK` — one group that receives every category without
-  its own `TG_STORAGE_CHAT_*` id, instead of refusing the upload (for example the
-  group named `TG-Storage-Chat-Fallback`). It is also listed in the
+- `PAGE_SIZE` — files per page in a category, and search results per page
+  (default `10`, capped at `20`).
+- `TG_STORAGE_CHAT_FALLBACK` — the emergency group (for example the group named
+  `TG-Storage-Chat-Fallback`): every file whose registration in Supabase fails is
+  copied here instead of the library, and «🔧 إصلاح» moves it to its real group
+  once the database answers again. It is also listed in the
   «🔗 انضمام للمجموعات» gate, with the same one-time invite and automatic admin
   promotion as the per-category groups.
+- `PENDING_STORE_PATH` — where the list of held files is kept (default
+  `data/pending_files.json`). Point it at a persistent disk so the list survives a
+  restart; it holds names and ids only, never file bytes.
 - `HASH_MAX_BYTES` — largest file (in bytes) that gets a SHA-256 content hash
   (default `20971520`, i.e. 20 MB). Telegram does not let a bot download more than
   20 MB, so raising it has no effect; larger files are stored without a hash.
@@ -112,8 +138,8 @@ Storage group variables use the **singular** category name —
 `TG_STORAGE_CHAT_DOCUMENT`, `TG_STORAGE_CHAT_IMAGE`, `TG_STORAGE_CHAT_VIDEO`,
 `TG_STORAGE_CHAT_AUDIO`, `TG_STORAGE_CHAT_ARCHIVE`, `TG_STORAGE_CHAT_OTHER`
 (one group may serve several categories). A category with no group of its own is
-stored in `TG_STORAGE_CHAT_FALLBACK` when it is set; without a fallback,
-uploads of that category are refused.
+reported as missing (the emergency group does not cover it), and uploads of that
+category are refused with a message naming the variable to add.
 
 `SUPABASE_SERVICE_KEY` accepts both key formats: the legacy `service_role` JWT
 and the new `sb_secret_...` secret key. The new keys are sent on the `apikey`
