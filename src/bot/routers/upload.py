@@ -51,7 +51,7 @@ async def handle_upload(
     status = await message.answer("⏳ جارٍ نقل الملف إلى مجموعة التخزين…")
 
     try:
-        saved = await services.files.save_from_message(message, candidate)
+        record = await services.files.save_from_message(message, candidate)
     except DuplicateFileError as exc:
         # The same Telegram file is already stored: no second copy, just its page.
         await safe_delete_message(bot, message.chat.id, message.message_id)
@@ -76,8 +76,6 @@ async def handle_upload(
         )
         return
 
-    record = saved.record
-
     # The copy now lives in its storage group, so the original message and the
     # status bubble are removed. The result is rendered on the single persistent
     # screen instead, which keeps the chat free of one message per upload.
@@ -89,5 +87,5 @@ async def handle_upload(
         bot,
         services,
         {"k": "file", "id": record.id},
-        notice=views.file_saved_text(record, saved.same_content),
+        notice=views.file_saved_text(record),
     )

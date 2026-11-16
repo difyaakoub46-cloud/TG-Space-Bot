@@ -25,7 +25,7 @@ Telegram bot that saves incoming files into the right Telegram storage group (do
 - `src/services/` — composition root, Telegram storage backend, file operations.
 - `src/bot/` — dispatcher, middleware, keyboards, views, states and routers.
 - `src/web/` — FastAPI keep-alive app.
-- `src/utils/` — classification, formatting and Telegram helpers.
+- `src/utils/` — classification, formatting, sorting and Telegram helpers.
 
 ## Single-screen UX
 
@@ -36,8 +36,29 @@ The only extra messages are the upload status bubble and copies explicitly
 requested with the «إرسال» button.
 
 Callback data is typed with `CallbackData` factories in `src/bot/keyboards.py`
-(`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`), so routers filter and unpack it
-instead of parsing raw strings.
+(`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`, `FolderCB`, `JoinCB`, `SortCB`), so
+routers filter and unpack it instead of parsing raw strings.
+
+## Sorting
+
+Inside a library category or a folder, «🔃 فرز / ترتيب» opens a panel with size,
+date and name orderings in both directions (the active one is marked ✅). The
+choice is kept in the screen key (`s` / `d`), so it survives opening a file and
+coming back, and the list is re-rendered with `edit_message_text`. Names are
+compared without Arabic diacritics and with the alef/ya variants folded, so
+Arabic and Latin names sort as one alphabet.
+
+## Files, duplicates and hashes
+
+Every incoming file is copied into its category group and recorded in Supabase.
+`file_unique_id` is unique in the database, so sending the same Telegram file
+twice shows «الملف موجود أصلاً» and stores no second copy. Files up to
+`HASH_MAX_BYTES` also get a SHA-256 `content_hash`, shown on the file screen, so
+two files with the same name but different content stay distinguishable.
+
+The «🩺 الحالة العامة» screen (and the startup report sent to `OWNER_ID`) reaches
+every configured group, including the fallback, and lists the ids the bot cannot
+use yet.
 
 ## Keep-alive server (Render + UptimeRobot)
 
@@ -70,14 +91,23 @@ because of a database hiccup.
 - `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
   (leave empty to allow everybody).
 - `PAGE_SIZE` — search results per page (default `10`, capped at `20`).
+- `TG_STORAGE_CHAT_FALLBACK` — one group that receives every category without
+  its own `TG_STORAGE_CHAT_*` id, instead of refusing the upload (for example the
+  group named `TG-Storage-Chat-Fallback`). It is also listed in the
+  «🔗 انضمام للمجموعات» gate, with the same one-time invite and automatic admin
+  promotion as the per-category groups.
+- `HASH_MAX_BYTES` — largest file (in bytes) that gets a SHA-256 content hash
+  (default `20971520`, i.e. 20 MB). Telegram does not let a bot download more than
+  20 MB, so raising it has no effect; larger files are stored without a hash.
 - `LOG_LEVEL` — logging level (default `INFO`).
 - `REQUEST_TIMEOUT` — Supabase request timeout in seconds (default `30`).
 
 Storage group variables use the **singular** category name —
 `TG_STORAGE_CHAT_DOCUMENT`, `TG_STORAGE_CHAT_IMAGE`, `TG_STORAGE_CHAT_VIDEO`,
-`TG_STORAGE_CHAT_AUDIO`, `TG_STORAGE_CHAT_ARCHIVE`, `TG_STORAGE_CHAT_OTHER`.
-A category with no group refuses uploads, so set all six (one group may serve
-several categories).
+`TG_STORAGE_CHAT_AUDIO`, `TG_STORAGE_CHAT_ARCHIVE`, `TG_STORAGE_CHAT_OTHER`
+(one group may serve several categories). A category with no group of its own is
+stored in `TG_STORAGE_CHAT_FALLBACK` when it is set; without a fallback,
+uploads of that category are refused.
 
 `SUPABASE_SERVICE_KEY` accepts both key formats: the legacy `service_role` JWT
 and the new `sb_secret_...` secret key. The new keys are sent on the `apikey`
