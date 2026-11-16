@@ -166,22 +166,6 @@ class FileRepository:
         rows = self._rows(response)
         return StoredFile.from_row(rows[0]) if rows else None
 
-    async def find_by_content_hash(self, content_hash: str) -> StoredFile | None:
-        """A stored file with the same bytes (same fingerprint), if any."""
-        if not content_hash:
-            return None
-        response = await self._request(
-            "GET",
-            params={
-                "select": "*",
-                "content_hash": f"eq.{content_hash}",
-                "order": "created_at.asc",
-                "limit": "1",
-            },
-        )
-        rows = self._rows(response)
-        return StoredFile.from_row(rows[0]) if rows else None
-
     async def search(
         self,
         *,
