@@ -16,6 +16,8 @@ from src.bot.routers import (
     fallback,
     folders,
     search,
+    sort,
+    status,
     upload,
 )
 from src.services.container import Services
@@ -66,6 +68,8 @@ def build_dispatcher(services: Services) -> Dispatcher:
         search.router,
         browse.router,
         folders.router,
+        sort.router,
+        status.router,
         access.router,
         fallback.router,
     )

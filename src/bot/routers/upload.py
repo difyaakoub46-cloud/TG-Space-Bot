@@ -13,6 +13,7 @@ from aiogram.types import Message
 from src.bot import navigation, views
 from src.bot.keyboards import main_menu_kb
 from src.services.container import Services
+from src.services.files import DuplicateFileError
 from src.utils.filetypes import extract_candidate
 from src.utils.telegram import safe_delete_message, safe_edit_text
 
@@ -50,7 +51,20 @@ async def handle_upload(
     status = await message.answer("⏳ جارٍ نقل الملف إلى مجموعة التخزين…")
 
     try:
-        record = await services.files.save_from_message(message, candidate)
+        saved = await services.files.save_from_message(message, candidate)
+    except DuplicateFileError as exc:
+        # The same Telegram file is already stored: no second copy, just its page.
+        await safe_delete_message(bot, message.chat.id, message.message_id)
+        await safe_delete_message(bot, status.chat.id, status.message_id)
+        await navigation.navigate_message(
+            message,
+            state,
+            bot,
+            services,
+            {"k": "file", "id": exc.record.id},
+            notice=views.duplicate_file_text(exc.record),
+        )
+        return
     except Exception as exc:  # noqa: BLE001 - every failure must be reported
         logger.exception("Failed to store %s", candidate.file_name)
         await safe_edit_text(
@@ -61,6 +75,8 @@ async def handle_upload(
             reply_markup=main_menu_kb(),
         )
         return
+
+    record = saved.record
 
     # The copy now lives in its storage group, so the original message and the
     # status bubble are removed. The result is rendered on the single persistent
@@ -73,5 +89,5 @@ async def handle_upload(
         bot,
         services,
         {"k": "file", "id": record.id},
-        notice=views.file_saved_text(record),
+        notice=views.file_saved_text(record, saved.same_content),
     )
