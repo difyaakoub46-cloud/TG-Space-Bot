@@ -13,7 +13,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 
-from src.bot import views
+from src.bot import reports
 from src.bot.dispatcher import build_dispatcher
 from src.core.config import Settings
 from src.core.logging import setup_logging
@@ -93,7 +93,7 @@ async def report_storage_health(settings: Settings, services) -> None:
         return
 
     await _send_owner_report(
-        services.bot, settings.owner_id, views.storage_check_text(checks, missing)
+        services.bot, settings.owner_id, reports.storage_check_text(checks, missing)
     )
 
 
