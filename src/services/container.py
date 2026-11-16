@@ -9,6 +9,7 @@ from aiogram import Bot
 from src.core.config import Settings
 from src.db.repository import FileRepository
 from src.services.files import FileStorageServices
+from src.services.pending import PendingStore
 from src.services.storage import StorageService
 
 
@@ -18,7 +19,13 @@ class Services:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.repository = FileRepository(settings)
-        self.files = FileStorageServices(settings, self.repository)
+        # Read the emergency registry at boot so the held files are known (and
+        # counted in the status screen) before the first upload.
+        self.pending = PendingStore(settings.pending_store_path)
+        self.pending.load()
+        self.files = FileStorageServices(
+            settings, self.repository, pending=self.pending
+        )
         self.storage: StorageService | None = None
         self.bot: Bot | None = None
         self.started_at = datetime.now(timezone.utc)
