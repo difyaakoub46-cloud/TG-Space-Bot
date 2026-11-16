@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
@@ -37,14 +36,6 @@ class DuplicateFileError(Exception):
     def __init__(self, record: StoredFile) -> None:
         super().__init__(f"الملف موجود أصلاً: {record.file_name}")
         self.record = record
-
-
-@dataclass(frozen=True, slots=True)
-class SavedUpload:
-    """What an upload produced, plus an existing file with the same content."""
-
-    record: StoredFile
-    same_content: StoredFile | None = None
 
 
 class FileStorageServices:
@@ -105,11 +96,12 @@ class FileStorageServices:
 
     async def save_from_message(
         self, message: Message, candidate: FileCandidate
-    ) -> SavedUpload:
+    ) -> StoredFile:
         """Copy the file into its storage group and persist its metadata.
 
-        The same Telegram file is never stored twice; a different file with the
-        same name is stored and told apart by its content fingerprint.
+        The same Telegram file is never stored twice, thanks to the unique
+        ``file_unique_id`` column; a different file with the same name is stored
+        and told apart by its content fingerprint.
         """
         existing = await self._repository.find_by_unique_id(
             candidate.file_unique_id or ""
@@ -118,11 +110,6 @@ class FileStorageServices:
             raise DuplicateFileError(existing)
 
         fingerprint = await self.content_hash(candidate)
-        twin = (
-            await self._repository.find_by_content_hash(fingerprint)
-            if fingerprint
-            else None
-        )
 
         storage = self.storage
         chat_id, message_id = await storage.upload(message, candidate)
@@ -162,7 +149,7 @@ class FileStorageServices:
             record.storage_message_id,
             f" hash={record.content_hash[:12]}" if record.content_hash else "",
         )
-        return SavedUpload(record=record, same_content=twin)
+        return record
 
     async def get(self, file_id: str) -> StoredFile | None:
         return await self._repository.get(file_id)
@@ -306,4 +293,4 @@ class FileStorageServices:
         return True
 
 
-__all__ = ["FileStorageServices"]
+__all__ = ["DuplicateFileError", "FileStorageServices"]
