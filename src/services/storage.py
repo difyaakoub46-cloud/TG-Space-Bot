@@ -14,7 +14,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import Message
 
-from src.core.config import Settings
+from src.core.config import ConfigurationError, Settings
 from src.utils.filetypes import FileCandidate, FileCategory
 from src.utils.telegram import call_with_retry
 
@@ -90,6 +90,38 @@ class StorageService:
         )
         return used_chat_id, stored.message_id
 
+    async def hold(self, message: Message) -> tuple[int, int]:
+        """Copy a file into the emergency group; returns ``(chat_id, message_id)``.
+
+        Used when the registration in Supabase fails: the copy must not stay in
+        the library, so the file is held here until «🔧 إصلاح» can register it.
+        """
+        fallback = self._settings.storage_chat_fallback
+        if fallback is None:
+            raise ConfigurationError(
+                "لا توجد مجموعة احتياطية مهيّأة (TG_STORAGE_CHAT_FALLBACK) "
+                "لحفظ الملفات التي يفشل تسجيلها."
+            )
+        stored, used_chat_id = await self._call(
+            self._bot.copy_message,
+            int(fallback),
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        return used_chat_id, stored.message_id
+
+    async def move(
+        self, storage_chat_id: int, storage_message_id: int, target_chat_id: int
+    ) -> tuple[int, int]:
+        """Copy a held file into its real group; the caller removes the old copy."""
+        stored, used_chat_id = await self._call(
+            self._bot.copy_message,
+            target_chat_id,
+            from_chat_id=self._current(storage_chat_id),
+            message_id=storage_message_id,
+        )
+        return used_chat_id, stored.message_id
+
     async def deliver(
         self, storage_chat_id: int, storage_message_id: int, target_chat_id: int
     ) -> tuple[int, int]:
@@ -131,8 +163,8 @@ class StorageService:
         for category, chat_id in self._settings.storage_chats().items():
             grouped.setdefault(self._current(int(chat_id)), set()).add(category)
 
-        # The fallback group receives every category without its own group, so it
-        # is checked too (an empty category set marks it as the fallback).
+        # The fallback group holds files whose registration failed, so it is
+        # checked too (an empty category set marks it as the emergency group).
         fallback = self._settings.storage_chat_fallback
         fallback_id = self._current(int(fallback)) if fallback is not None else None
         if fallback_id is not None and fallback_id not in grouped:

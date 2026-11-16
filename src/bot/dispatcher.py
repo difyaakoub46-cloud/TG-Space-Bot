@@ -15,6 +15,7 @@ from src.bot.routers import (
     commands,
     fallback,
     folders,
+    pending,
     search,
     sort,
     status,
@@ -70,6 +71,7 @@ def build_dispatcher(services: Services) -> Dispatcher:
         folders.router,
         sort.router,
         status.router,
+        pending.router,
         access.router,
         fallback.router,
     )
