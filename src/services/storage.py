@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot
@@ -15,10 +15,22 @@ from aiogram.exceptions import (
 from aiogram.types import Message
 
 from src.core.config import Settings
-from src.utils.filetypes import FileCandidate
+from src.utils.filetypes import FileCandidate, FileCategory
 from src.utils.telegram import call_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class StorageChatCheck:
+    """Result of reaching one storage group at startup."""
+
+    chat_id: int
+    categories: frozenset[FileCategory]
+    reachable: bool
+    title: str | None = None
+    reason: str | None = None
+
 
 _MISSING_MESSAGE_MARKERS = (
     "message to delete not found",
@@ -108,24 +120,49 @@ class StorageService:
                 return False
             raise
 
-    async def verify_chats(self) -> list[int]:
-        """Check that the bot can reach every configured storage group."""
-        unreachable: list[int] = []
-        for chat_id in self._unique_chats():
+    async def check_chats(self) -> list[StorageChatCheck]:
+        """Reach every configured storage group, one entry per unique chat id.
+
+        The report is built here so the owner learns about a wrong id or a missing
+        bot membership at startup instead of at the first upload.
+        """
+        grouped: dict[int, set[FileCategory]] = {}
+        for category, chat_id in self._settings.storage_chats().items():
+            grouped.setdefault(self._current(int(chat_id)), set()).add(category)
+
+        checks: list[StorageChatCheck] = []
+        for chat_id, categories in grouped.items():
             try:
-                chat = await self._bot.get_chat(self._current(chat_id))
+                chat = await self._bot.get_chat(chat_id)
             except TelegramAPIError as exc:
+                # ``str(exc)`` of an aiogram API error is prefixed with
+                # "Telegram server says"; the owner only needs the cause itself.
+                detail = getattr(exc, "message", None) or str(exc)
+                reason = " ".join(str(detail).split())[:200] or type(exc).__name__
                 logger.error(
-                    "Storage chat %s is unreachable (%s). Add the bot as an admin.",
+                    "Storage chat %s is unreachable (%s). Add the bot as an admin "
+                    "or fix the id in the environment.",
                     chat_id,
-                    exc,
+                    reason,
                 )
-                unreachable.append(chat_id)
+                checks.append(
+                    StorageChatCheck(
+                        chat_id=chat_id,
+                        categories=frozenset(categories),
+                        reachable=False,
+                        reason=reason,
+                    )
+                )
             else:
                 logger.info(
                     "Storage chat ready: %s (%s)", chat_id, chat.title or chat.type
                 )
-        return unreachable
-
-    def _unique_chats(self) -> Iterable[int]:
-        return dict.fromkeys(self._settings.storage_chats().values())
+                checks.append(
+                    StorageChatCheck(
+                        chat_id=chat_id,
+                        categories=frozenset(categories),
+                        reachable=True,
+                        title=chat.title,
+                    )
+                )
+        return checks

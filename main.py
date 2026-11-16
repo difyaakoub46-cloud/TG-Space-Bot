@@ -11,7 +11,9 @@ import uvicorn
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 
+from src.bot import views
 from src.bot.dispatcher import build_dispatcher
 from src.core.config import Settings
 from src.core.logging import setup_logging
@@ -43,14 +45,26 @@ def start_keepalive_server(settings: Settings) -> threading.Thread:
     return thread
 
 
-async def run_bot(settings: Settings, services, dispatcher) -> None:
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    services.bind_bot(bot)
+async def _send_owner_report(bot, owner_id: int | None, text: str) -> None:
+    """Deliver a startup report to the owner; a missing owner means log only."""
+    if owner_id is None:
+        logger.warning("OWNER_ID is not set: the storage report was only logged")
+        return
+    try:
+        await bot.send_message(owner_id, text)
+    except TelegramAPIError:
+        logger.warning("Could not deliver the storage report", exc_info=True)
 
-    configured = services.settings.storage_chats()
+
+async def report_storage_health(settings: Settings, services) -> None:
+    """Reach every storage group at boot and tell the owner what is broken.
+
+    Without this the first broken group is discovered at the first upload; here
+    the mismatch is reported before any file is involved.
+    """
+    configured = settings.storage_chats()
+    missing = [category for category in FileCategory if category not in configured]
+
     if not configured:
         logger.warning(
             "No storage groups configured: set TG_STORAGE_CHAT_<CATEGORY> "
@@ -61,17 +75,36 @@ async def run_bot(settings: Settings, services, dispatcher) -> None:
             "Storage groups configured for: %s",
             ", ".join(category.value for category in configured),
         )
-        missing = [c.value for c in FileCategory if c not in configured]
         if missing:
             logger.warning(
                 "No storage group configured for: %s - uploads of these types "
                 "will be refused (check the TG_STORAGE_CHAT_<CATEGORY> names)",
-                ", ".join(missing),
+                ", ".join(category.value for category in missing),
             )
-        try:
-            await services.storage.verify_chats()
-        except Exception:  # noqa: BLE001 - startup must not fail on a bad chat id
-            logger.exception("Could not verify storage groups")
+
+    try:
+        checks = await services.storage.check_chats()
+    except Exception:  # noqa: BLE001 - startup must not fail on a bad chat id
+        logger.exception("Could not verify storage groups")
+        return
+
+    if not missing and all(check.reachable for check in checks):
+        logger.info("All %s storage group(s) are reachable", len(checks))
+        return
+
+    await _send_owner_report(
+        services.bot, settings.owner_id, views.storage_check_text(checks, missing)
+    )
+
+
+async def run_bot(settings: Settings, services, dispatcher) -> None:
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    services.bind_bot(bot)
+
+    await report_storage_health(settings, services)
 
     try:
         logger.info("Starting long polling")
