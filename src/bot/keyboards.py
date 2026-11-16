@@ -36,7 +36,10 @@ class MenuCB(CallbackData, prefix="menu"):
 
 
 class CategoryCB(CallbackData, prefix="cat"):
+    """Open a category, or one of its pages (``page=1`` is the first one)."""
+
     name: str
+    page: int = 1
 
 
 class FileCB(CallbackData, prefix="file"):
@@ -60,7 +63,11 @@ class JoinCB(CallbackData, prefix="join"):
 
 
 class SortCB(CallbackData, prefix="srt"):
-    """Sorting panel: menu / set a field and direction / close."""
+    """Sorting panel: menu / set a field and direction / close.
+
+    Sorting is applied to the whole category in the database, so an ordering
+    change always restarts from the first page.
+    """
 
     action: str
     field: str = ""
@@ -206,6 +213,8 @@ def category_files_kb(
     files: Sequence[StoredFile],
     category: FileCategory | str,
     sort: SortSpec | None = None,
+    page: int = 1,
+    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
@@ -214,6 +223,41 @@ def category_files_kb(
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
+
+    # One page of the whole category: the ordering lives in the screen key, so
+    # moving between pages never changes the sort.
+    if total_pages > 1:
+        value = category.value if isinstance(category, FileCategory) else category
+        controls: list[InlineKeyboardButton] = []
+        if page > 1:
+            controls.append(
+                InlineKeyboardButton(
+                    text="⏮ الأولى",
+                    callback_data=CategoryCB(name=value, page=1).pack(),
+                )
+            )
+            controls.append(
+                InlineKeyboardButton(
+                    text="◀ السابق",
+                    callback_data=CategoryCB(name=value, page=page - 1).pack(),
+                )
+            )
+        if page < total_pages:
+            controls.append(
+                InlineKeyboardButton(
+                    text="التالي ▶",
+                    callback_data=CategoryCB(name=value, page=page + 1).pack(),
+                )
+            )
+            controls.append(
+                InlineKeyboardButton(
+                    text="الأخيرة ⏭",
+                    callback_data=CategoryCB(name=value, page=total_pages).pack(),
+                )
+            )
+        if controls:
+            builder.row(*controls)
+
     if files:
         builder.row(_sort_button(sort or SortSpec()))
     builder.row(*nav_row())
