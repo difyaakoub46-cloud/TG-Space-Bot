@@ -154,7 +154,7 @@ def categories_kb(
         )
     builder.adjust(2)
 
-    # One tap per favourite folder, right under the categories.
+    # One tap per favourite folder, in the manual order kept in the database.
     for folder in favorites:
         builder.row(
             InlineKeyboardButton(
@@ -291,6 +291,22 @@ def folder_files_kb(
         )
     builder.adjust(1)
     if folder_id:
+        if favorite:
+            # Manual order of the favourites, exactly as they appear in the library.
+            builder.row(
+                InlineKeyboardButton(
+                    text="⬆️ تقديم",
+                    callback_data=FolderCB(
+                        action="move_up", value=folder_id
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text="⬇️ تأخير",
+                    callback_data=FolderCB(
+                        action="move_down", value=folder_id
+                    ).pack(),
+                ),
+            )
         builder.row(
             InlineKeyboardButton(
                 text=(
