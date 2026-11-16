@@ -18,3 +18,5 @@ htmlcov/
 .DS_Store
 Thumbs.db
 *.log
+# Runtime data: the emergency registry of held files (PENDING_STORE_PATH).
+data/
