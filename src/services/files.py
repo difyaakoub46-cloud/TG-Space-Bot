@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
 
@@ -14,6 +15,7 @@ from aiogram.types import Message
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
 from src.db.repository import FileRepository, SupabaseError
+from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
 from src.utils.sorting import SortSpec, database_order, sort_files
@@ -36,6 +38,26 @@ class DuplicateFileError(Exception):
         self.record = record
 
 
+class QuarantinedFileError(Exception):
+    """The file could not be registered, so it is held in the fallback group."""
+
+    def __init__(self, pending: PendingFile) -> None:
+        super().__init__(f"الملف محفوظ في الاحتياط: {pending.file_name}")
+        self.pending = pending
+
+
+@dataclass
+class RepairReport:
+    """What «🔧 إصلاح» managed to do with the files waiting in the fallback."""
+
+    repaired: int = 0
+    duplicates: int = 0
+    failed: int = 0
+    kept: int = 0
+    database_error: str | None = None
+    errors: list[str] = field(default_factory=list)
+
+
 class FileStorageServices:
     """High level operations shared by the upload, browse and search routers."""
 
@@ -45,11 +67,13 @@ class FileStorageServices:
         repository: FileRepository,
         storage: StorageService | None = None,
         bot: Bot | None = None,
+        pending: PendingStore | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._storage = storage
         self._bot = bot
+        self._pending = pending
 
     def bind_bot(self, bot: Bot) -> None:
         """The bot is needed to read a file's bytes when fingerprinting it."""
@@ -57,6 +81,14 @@ class FileStorageServices:
 
     def bind_storage(self, storage: StorageService) -> None:
         self._storage = storage
+
+    @property
+    def pending(self) -> PendingStore:
+        """The emergency registry, created (and loaded) when it is first needed."""
+        if self._pending is None:
+            self._pending = PendingStore(self._settings.pending_store_path)
+            self._pending.load()
+        return self._pending
 
     @property
     def storage(self) -> StorageService:
@@ -99,11 +131,16 @@ class FileStorageServices:
 
         The same Telegram file is never stored twice, thanks to the unique
         ``file_unique_id`` column; a different file with the same name is stored
-        and told apart by its content fingerprint.
+        and told apart by its content fingerprint. When the registration fails the
+        file is held in the emergency group instead of the library.
         """
-        existing = await self._repository.find_by_unique_id(
-            candidate.file_unique_id or ""
-        )
+        try:
+            existing = await self._repository.find_by_unique_id(
+                candidate.file_unique_id or ""
+            )
+        except SupabaseError as exc:
+            # The database is not answering at all: hold the file right away.
+            raise await self._quarantine(message, candidate, exc) from exc
         if existing is not None:
             raise DuplicateFileError(existing)
 
@@ -128,7 +165,11 @@ class FileStorageServices:
             )
         except SupabaseError as exc:
             if not _is_duplicate(exc):
-                raise
+                # Registration failed: the copy is pulled back out of the library
+                # and held in the fallback group instead of being lost.
+                raise await self._quarantine(
+                    message, candidate, exc, library_copy=(chat_id, message_id)
+                ) from exc
             # The unique index caught a concurrent copy of the same file: undo the
             # extra copy we just made and report the file already on record.
             await storage.remove(chat_id, message_id)
@@ -148,6 +189,129 @@ class FileStorageServices:
             f" hash={record.content_hash[:12]}" if record.content_hash else "",
         )
         return record
+
+    async def _quarantine(
+        self,
+        message: Message,
+        candidate: FileCandidate,
+        exc: SupabaseError,
+        library_copy: tuple[int, int] | None = None,
+    ) -> Exception:
+        """Hold the file in the fallback group and remember it for the repair.
+
+        Returns the exception the caller raises: a ``QuarantinedFileError`` once the
+        copy is safely held, or the original database error when even the fallback
+        copy fails (nothing was saved, so the upload reports a plain failure).
+        """
+        storage = self.storage
+        if library_copy is not None:
+            await storage.remove(*library_copy)
+
+        reason = " ".join(str(exc).split())[:200] or type(exc).__name__
+        try:
+            chat_id, message_id = await storage.hold(message)
+        except Exception:  # noqa: BLE001 - report the database failure as it is
+            logger.exception(
+                "Could not hold %s in the fallback group", candidate.file_name
+            )
+            return exc
+
+        entry = PendingFile(
+            chat_id=chat_id,
+            message_id=message_id,
+            file_name=candidate.file_name,
+            mime_type=candidate.mime_type,
+            size_bytes=candidate.file_size or 0,
+            category=candidate.category,
+            file_id=candidate.file_id or "",
+            file_unique_id=candidate.file_unique_id,
+            uploader_id=message.from_user.id if message.from_user else None,
+            reason=reason,
+        )
+        await self.pending.add(entry)
+        logger.warning(
+            "Held %s in the fallback group as %s/%s: %s",
+            candidate.file_name,
+            chat_id,
+            message_id,
+            reason,
+        )
+        return QuarantinedFileError(entry)
+
+    async def repair_pending(self) -> RepairReport:
+        """Register every held file and move it into its real storage group.
+
+        The database is probed once before any copy is made, and the walk stops as
+        soon as it fails again: no file is ever moved without a row behind it.
+        """
+        entries = await self.pending.all()
+        report = RepairReport()
+        if not entries:
+            return report
+
+        try:
+            await self._repository.count()
+        except SupabaseError as exc:
+            report.database_error = " ".join(str(exc).split())[:200]
+            return report
+
+        groups = self._settings.storage_chats()
+        for entry in entries:
+            target = groups.get(entry.category)
+            if target is None:
+                report.kept += 1
+                report.errors.append(
+                    f"{entry.file_name}: لا توجد مجموعة تخزين لهذه الفئة"
+                )
+                continue
+
+            try:
+                chat_id, message_id = await self.storage.move(
+                    entry.chat_id, entry.message_id, int(target)
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
+                logger.warning("Could not move %s: %s", entry.file_name, exc)
+                report.failed += 1
+                report.errors.append(f"{entry.file_name}: {type(exc).__name__}")
+                continue
+
+            try:
+                await self._repository.create(
+                    file_id=entry.file_id,
+                    file_unique_id=entry.file_unique_id,
+                    file_name=entry.file_name,
+                    file_type=entry.mime_type,
+                    category=entry.category.value,
+                    file_size=entry.size_bytes,
+                    content_hash=None,
+                    user_id=entry.uploader_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+            except SupabaseError as exc:
+                # Never leave an unregistered copy in the library.
+                await self.storage.remove(chat_id, message_id)
+                if _is_duplicate(exc):
+                    await self.storage.remove(entry.chat_id, entry.message_id)
+                    await self.pending.remove(entry.chat_id, entry.message_id)
+                    report.duplicates += 1
+                    continue
+                report.database_error = " ".join(str(exc).split())[:200]
+                report.errors.append(f"{entry.file_name}: {report.database_error}")
+                break
+
+            await self.storage.remove(entry.chat_id, entry.message_id)
+            await self.pending.remove(entry.chat_id, entry.message_id)
+            report.repaired += 1
+
+        logger.info(
+            "Repair finished: %s repaired, %s duplicates, %s failed, %s kept",
+            report.repaired,
+            report.duplicates,
+            report.failed,
+            report.kept,
+        )
+        return report
 
     async def get(self, file_id: str) -> StoredFile | None:
         return await self._repository.get(file_id)
@@ -313,4 +477,9 @@ class FileStorageServices:
         return True
 
 
-__all__ = ["DuplicateFileError", "FileStorageServices"]
+__all__ = [
+    "DuplicateFileError",
+    "FileStorageServices",
+    "QuarantinedFileError",
+    "RepairReport",
+]
