@@ -15,6 +15,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size, human_total
+from src.utils.sorting import SortDirection, SortField, SortSpec
 
 _NOT_MODIFIED = "message is not modified"
 _MAX_TRACKED_MESSAGES = 100
@@ -46,6 +47,23 @@ CATEGORY_ORDER: tuple[FileCategory, ...] = (
 )
 
 
+# One readable line per selectable ordering; the buttons reuse the same wording.
+SORT_SUMMARIES: dict[tuple[SortField, SortDirection], str] = {
+    (SortField.size, SortDirection.asc): "📦 الحجم — الأصغر أولاً",
+    (SortField.size, SortDirection.desc): "📦 الحجم — الأكبر أولاً",
+    (SortField.date, SortDirection.asc): "🕐 التاريخ — الأقدم أولاً",
+    (SortField.date, SortDirection.desc): "🕐 التاريخ — الأحدث أولاً",
+    (SortField.name, SortDirection.asc): "🔤 الاسم — أ→ي / A→Z",
+    (SortField.name, SortDirection.desc): "🔤 الاسم — ي→أ / Z→A",
+}
+
+_SORT_NAMES: dict[SortField, str] = {
+    SortField.size: "الحجم",
+    SortField.date: "التاريخ",
+    SortField.name: "الاسم",
+}
+
+
 def category_label(category: FileCategory | str) -> str:
     if isinstance(category, FileCategory):
         return CATEGORY_LABELS.get(category, category.value)
@@ -57,6 +75,32 @@ def category_label(category: FileCategory | str) -> str:
 
 def _escape(value: Any) -> str:
     return html.escape(str(value), quote=False)
+
+
+def sort_summary(sort: SortSpec) -> str:
+    """Human description of the current ordering."""
+    return SORT_SUMMARIES.get((sort.field, sort.direction), "")
+
+
+def sort_short(sort: SortSpec) -> str:
+    """Compact ordering for the «فرز» button label."""
+    arrow = "⬆" if sort.direction is SortDirection.asc else "⬇"
+    return f"{_SORT_NAMES[sort.field]} {arrow}"
+
+
+def sort_menu_text(sort: SortSpec) -> str:
+    """The sorting panel: current choice plus what each button does."""
+    return "\n".join(
+        [
+            "🔃 <b>فرز وترتيب الملفات</b>",
+            "",
+            f"الترتيب الحالي: <b>{sort_summary(sort)}</b>",
+            "",
+            "اختر ترتيباً؛ تتحدّث القائمة في مكانها دون إعادة فتحها.",
+            "ترتيب الاسم يتجاهل التشكيل وأشكال الألف في العربية، "
+            "ويرتّب الحروف اللاتينية جنباً إلى جنب.",
+        ]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -257,6 +301,7 @@ def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
             "🔍 بحث — البحث بالاسم داخل المكتبة",
             "📊 إحصائيات — عدد الملفات والحجم الإجمالي",
             "📁 المجلدات — مجموعات افتراضية للتنظيم السريع",
+            "🩺 الحالة العامة — البوت وقاعدة البيانات ومجموعات التخزين",
         ]
     )
 
@@ -268,9 +313,12 @@ def help_text() -> str:
         "• /library لتصفح المكتبة حسب الفئة.\n"
         "• /search للبحث عن ملف محفوظ بالاسم.\n"
         "• /stats لعرض الإحصائيات.\n"
+        "• /status لعرض الحالة العامة وفحص مجموعات التخزين.\n"
         "• /cancel لإلغاء أي عملية جارية.\n\n"
         "من صفحة أي ملف يمكنك: إرساله، حذفه، إعادة تسميته، أو إضافته إلى مجلد.\n"
-        "المجلدات تسميات تنظيمية فقط؛ الملف يبقى في مجموعة تيليغرام الخاصة بفئته.\n\n"
+        "المجلدات تسميات تنظيمية فقط؛ الملف يبقى في مجموعة تيليغرام الخاصة بفئته.\n"
+        "داخل المكتبة أو أي مجلد: زر «🔃 فرز / ترتيب» يغيّر الترتيب حسب الحجم "
+        "أو التاريخ أو الاسم، تصاعدياً أو تنازلياً.\n\n"
         "🔗 انضمام للمجموعات — للمالك فقط: التحقق تلقائي من معرّف حسابك بلا كلمة سر، "
         "ثم رابط دعوة لاستخدام واحد وترقية تلقائية إلى مشرف."
     )
@@ -350,6 +398,7 @@ def category_text(
     category: FileCategory | str,
     files: Sequence[StoredFile],
     totals: tuple[int, int] | None = None,
+    sort: SortSpec | None = None,
 ) -> str:
     """One category: its file count and total size, then the files themselves."""
     label = category_label(category)
@@ -364,6 +413,9 @@ def category_text(
     ]
     if not files:
         lines.append("لا توجد ملفات في هذه الفئة.")
+    else:
+        lines.append(f"🔃 الترتيب: {sort_summary(sort or SortSpec())}")
+        lines.append("اضغط «🔃 فرز / ترتيب» أدناه لتغيير طريقة العرض.")
     return "\n".join(lines).rstrip()
 
 
@@ -400,12 +452,39 @@ def search_results_text(
     return "\n".join(lines)
 
 
-def file_saved_text(record: StoredFile) -> str:
-    return (
-        "✅ <b>تم حفظ الملف</b>\n\n"
-        f"الاسم: {_escape(record.file_name)}\n"
-        f"الفئة: {category_label(record.category)}\n"
-        f"الحجم: {_escape(record.size_human)}"
+def file_saved_text(
+    record: StoredFile, same_content: StoredFile | None = None
+) -> str:
+    lines = [
+        "✅ <b>تم حفظ الملف</b>",
+        "",
+        f"الاسم: {_escape(record.file_name)}",
+        f"الفئة: {category_label(record.category)}",
+        f"الحجم: {_escape(record.size_human)}",
+    ]
+    if record.hash_short:
+        lines.append(f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>")
+    if same_content is not None:
+        lines.append("")
+        lines.append(
+            "ℹ️ المحتوى مطابق لملف محفوظ سابقاً "
+            f"«{_escape(same_content.file_name)}» — حُفظ هذا كملف مستقل."
+        )
+    return "\n".join(lines)
+
+
+def duplicate_file_text(record: StoredFile) -> str:
+    """The file is already in the library: no second copy was stored."""
+    return "\n".join(
+        [
+            "♻️ <b>الملف موجود أصلاً</b>",
+            "",
+            f"الاسم: {_escape(record.file_name)}",
+            f"الحجم: {_escape(record.size_human)}",
+            f"تاريخ الحفظ: {_escape(record.created_human)}",
+            "",
+            "لم تُحفظ نسخة جديدة، وهذا هو الملف المحفوظ سابقاً في مجموعته.",
+        ]
     )
 
 
@@ -417,6 +496,11 @@ def file_text(record: StoredFile, folders: Sequence[str] = ()) -> str:
         f"الحجم: {_escape(record.size_human)}",
         f"تاريخ الحفظ: {_escape(record.created_human)}",
         f"المجلدات: {_escape('، '.join(folders)) if folders else '—'}",
+        (
+            f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>"
+            if record.hash_short
+            else "بصمة المحتوى: — (لم تُحسب، الملف أكبر من حدّ الحساب)"
+        ),
     ]
     return "\n".join(lines)
 
@@ -465,7 +549,11 @@ def folder_delete_text(folder: Folder) -> str:
     )
 
 
-def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
+def folder_text(
+    folder: Folder,
+    files: Sequence[StoredFile],
+    sort: SortSpec | None = None,
+) -> str:
     count = folder.count or len(files)
     size = folder.bytes or sum(file.size_bytes for file in files)
     lines = [
@@ -476,6 +564,8 @@ def folder_text(folder: Folder, files: Sequence[StoredFile]) -> str:
         "",
     ]
     if files:
+        lines.append(f"🔃 الترتيب: {sort_summary(sort or SortSpec())}")
+        lines.append("")
         lines.append("اختر ملفاً لعرضه:")
     else:
         lines.append("لا توجد ملفات في هذا المجلد بعد.")
