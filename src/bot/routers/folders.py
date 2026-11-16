@@ -128,6 +128,46 @@ async def folder_put_callback(
     )
 
 
+@router.callback_query(FolderCB.filter(F.action == "move_up"))
+@router.callback_query(FolderCB.filter(F.action == "move_down"))
+async def folder_move_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Reorder the favourites: one place up or down on the library screen."""
+    data = FolderCB.unpack(callback.data)
+    user_id = _user_id(callback)
+    step = -1 if data.action == "move_up" else 1
+
+    folder = await services.files.move_favorite(data.value, user_id, step)
+    if folder is None:
+        await callback.answer("هذا المجلد ليس في المفضلة.", show_alert=True)
+        return
+
+    favorites = await services.files.favorite_folders(user_id)
+    position = next(
+        (
+            index
+            for index, item in enumerate(favorites, start=1)
+            if item.id == folder.id
+        ),
+        1,
+    )
+    files = await services.files.folder_files(folder.id)
+    notice = (
+        f"✅ صار «{folder.name}» في الموضع {position} من {len(favorites)} "
+        "في المجلدات المفضلة."
+    )
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        _folder_key(user_id, folder.id),
+        notice=notice + "\n\n" + views.folder_text(folder, files),
+        push=False,
+    )
+
+
 @router.callback_query(FolderCB.filter(F.action == "favorite"))
 @router.callback_query(FolderCB.filter(F.action == "unfavorite"))
 async def folder_favorite_callback(
