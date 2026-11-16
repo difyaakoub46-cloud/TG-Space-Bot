@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 
 MAX_TRAIL = 20
 
+# The JoinCB value of the fallback group (its category value is meaningless).
+JOIN_FALLBACK = "fallback"
+
 MAIN: dict[str, object] = {"k": "main"}
 
 
@@ -153,9 +156,13 @@ async def build(
         return views.help_text(), help_kb()
 
     if kind == "join_groups":
-        groups = sorted(
-            services.settings.storage_chats().items(), key=lambda item: item[0].value
-        )
+        settings = services.settings
+        groups = [
+            (category.value, views.category_label(category))
+            for category in sorted(settings.storage_chats(), key=lambda item: item.value)
+        ]
+        if settings.storage_chat_fallback is not None:
+            groups.append((JOIN_FALLBACK, views.FALLBACK_LABEL))
         return views.join_groups_text(), groups_kb(groups)
 
     # The main menu (and any screen that no longer exists) shows the library total.

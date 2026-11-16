@@ -9,7 +9,7 @@ from __future__ import annotations
 import html
 from collections.abc import Sequence
 
-from src.bot.views import category_label
+from src.bot.views import FALLBACK_LABEL, category_label
 from src.services.storage import StorageChatCheck
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
@@ -54,7 +54,7 @@ def storage_check_text(
         lines.append("⛔ <b>مجموعات غير قابلة للوصول</b>")
         for check in broken:
             labels = (
-                "🛟 احتياطية"
+                FALLBACK_LABEL
                 if check.is_fallback
                 else "، ".join(
                     category_label(category)
