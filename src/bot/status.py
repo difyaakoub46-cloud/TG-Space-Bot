@@ -141,6 +141,7 @@ async def status_text(
             + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 غير مهيّأة"),
             f"الوصول الآن: ✅ {format_number(len(reachable))} · "
             f"⛔ {format_number(len(broken))}",
+            f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
         ]
     )
     if not checks:
@@ -162,7 +163,7 @@ async def status_text(
     uncovered = settings.uncovered_categories()
     if uncovered:
         lines.append(
-            "⚠️ بلا مجموعة ولا احتياطية: "
+            "⚠️ فئات بلا مجموعة تخزين (الاحتياط لا يغطيها، ورفعها سيُرفض): "
             + "، ".join(views.category_label(category) for category in uncovered)
         )
     return "\n".join(lines)

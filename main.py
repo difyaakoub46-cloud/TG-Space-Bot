@@ -62,7 +62,8 @@ async def report_storage_health(settings: Settings, services) -> None:
     the mismatch is reported before any file is involved.
     """
     configured = settings.storage_chats()
-    # With a fallback group configured no category is refused, so nothing is missing.
+    # The fallback group is an emergency store, not a library group: a category
+    # without its own group is still reported as missing.
     missing = settings.uncovered_categories()
 
     if not configured:
