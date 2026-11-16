@@ -2,20 +2,49 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
-from src.db.repository import FileRepository
+from src.db.repository import FileRepository, SupabaseError
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
+from src.utils.sorting import SortSpec, database_order, sort_files
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
+# The cap of a category listing; the ordering is applied on the fetched rows.
+CATEGORY_FETCH_LIMIT = 300
+
+
+def _is_duplicate(exc: SupabaseError) -> bool:
+    text = str(exc)
+    return "23505" in text or "duplicate key" in text.lower()
+
+
+class DuplicateFileError(Exception):
+    """Raised when the exact same Telegram file is already in the library."""
+
+    def __init__(self, record: StoredFile) -> None:
+        super().__init__(f"الملف موجود أصلاً: {record.file_name}")
+        self.record = record
+
+
+@dataclass(frozen=True, slots=True)
+class SavedUpload:
+    """What an upload produced, plus an existing file with the same content."""
+
+    record: StoredFile
+    same_content: StoredFile | None = None
 
 
 class FileStorageServices:
@@ -26,10 +55,16 @@ class FileStorageServices:
         settings: Settings,
         repository: FileRepository,
         storage: StorageService | None = None,
+        bot: Bot | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._storage = storage
+        self._bot = bot
+
+    def bind_bot(self, bot: Bot) -> None:
+        """The bot is needed to read a file's bytes when fingerprinting it."""
+        self._bot = bot
 
     def bind_storage(self, storage: StorageService) -> None:
         self._storage = storage
@@ -40,33 +75,94 @@ class FileStorageServices:
             raise RuntimeError("StorageService is not bound to a bot yet")
         return self._storage
 
+    async def content_hash(self, candidate: FileCandidate) -> str | None:
+        """SHA-256 of the file bytes, or ``None`` when they cannot be read.
+
+        Telegram refuses downloads above 20 MB, so the fingerprint is best effort:
+        a missing hash never blocks an upload, it only leaves the file without it.
+        """
+        if self._bot is None or not candidate.file_id:
+            return None
+        if candidate.file_size and candidate.file_size > self._settings.hash_max_bytes:
+            logger.info(
+                "%s is larger than the hashing limit; stored without a fingerprint",
+                candidate.file_name,
+            )
+            return None
+
+        buffer = BytesIO()
+        try:
+            await self._bot.download(candidate.file_id, destination=buffer)
+        except (TelegramAPIError, OSError):
+            logger.warning(
+                "Could not read %s to fingerprint it",
+                candidate.file_name,
+                exc_info=True,
+            )
+            return None
+        data = buffer.getvalue()
+        return hashlib.sha256(data).hexdigest() if data else None
+
     async def save_from_message(
         self, message: Message, candidate: FileCandidate
-    ) -> StoredFile:
-        """Copy the file into its category group and persist its metadata."""
+    ) -> SavedUpload:
+        """Copy the file into its storage group and persist its metadata.
+
+        The same Telegram file is never stored twice; a different file with the
+        same name is stored and told apart by its content fingerprint.
+        """
+        existing = await self._repository.find_by_unique_id(
+            candidate.file_unique_id or ""
+        )
+        if existing is not None:
+            raise DuplicateFileError(existing)
+
+        fingerprint = await self.content_hash(candidate)
+        twin = (
+            await self._repository.find_by_content_hash(fingerprint)
+            if fingerprint
+            else None
+        )
+
         storage = self.storage
         chat_id, message_id = await storage.upload(message, candidate)
 
         uploader_id = message.from_user.id if message.from_user else None
-        record = await self._repository.create(
-            file_id=candidate.file_id,
-            file_unique_id=candidate.file_unique_id,
-            file_name=candidate.file_name,
-            file_type=candidate.mime_type,
-            category=candidate.category.value,
-            file_size=candidate.file_size,
-            user_id=uploader_id,
-            chat_id=chat_id,
-            message_id=message_id,
-        )
+        try:
+            record = await self._repository.create(
+                file_id=candidate.file_id,
+                file_unique_id=candidate.file_unique_id,
+                file_name=candidate.file_name,
+                file_type=candidate.mime_type,
+                category=candidate.category.value,
+                file_size=candidate.file_size,
+                content_hash=fingerprint,
+                user_id=uploader_id,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+        except SupabaseError as exc:
+            if not _is_duplicate(exc):
+                raise
+            # The unique index caught a concurrent copy of the same file: undo the
+            # extra copy we just made and report the file already on record.
+            await storage.remove(chat_id, message_id)
+            duplicate = await self._repository.find_by_unique_id(
+                candidate.file_unique_id or ""
+            )
+            if duplicate is None:
+                raise
+            raise DuplicateFileError(duplicate) from exc
+
         logger.info(
-            "Stored %s (%s) as %s/%s",
+            "Stored %s (%s) as %s/%s%s",
             record.file_name,
             record.category.value,
             record.storage_chat_id,
             record.storage_message_id,
+            f" hash={record.content_hash[:12]}" if record.content_hash else "",
         )
-        return record
+        return SavedUpload(record=record, same_content=twin)
 
     async def get(self, file_id: str) -> StoredFile | None:
         return await self._repository.get(file_id)
@@ -87,9 +183,19 @@ class FileStorageServices:
         return results
 
     async def by_category(
-        self, category: FileCategory | str, limit: int = DEFAULT_SEARCH_LIMIT
+        self,
+        category: FileCategory | str,
+        sort: SortSpec | None = None,
+        limit: int = CATEGORY_FETCH_LIMIT,
     ) -> list[StoredFile]:
-        return await self.search(category=category, limit=limit)
+        """Files of one category, ordered by the requested sort."""
+        spec = sort or SortSpec()
+        results, _total = await self._repository.search(
+            category=parse_category(category),
+            limit=limit,
+            order=database_order(spec),
+        )
+        return sort_files(results, spec)
 
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
@@ -174,8 +280,12 @@ class FileStorageServices:
     async def create_folder(self, user_id: int, name: str) -> Folder:
         return await self._repository.create_folder(user_id, name)
 
-    async def folder_files(self, folder_id: str) -> list[StoredFile]:
-        return await self._repository.files_in_folder(folder_id)
+    async def folder_files(
+        self, folder_id: str, sort: SortSpec | None = None
+    ) -> list[StoredFile]:
+        """Files of one folder, ordered by the requested sort."""
+        files = await self._repository.files_in_folder(folder_id)
+        return sort_files(files, sort or SortSpec())
 
     async def delete_folder(self, folder_id: str, user_id: int) -> bool:
         """Remove the folder label only: its files are kept in the library."""
