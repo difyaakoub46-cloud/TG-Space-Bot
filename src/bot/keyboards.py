@@ -12,6 +12,7 @@ from src.bot import views
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
+from src.utils.sorting import SortDirection, SortField, SortSpec
 
 BTN_LIBRARY = "📚 المكتبة"
 BTN_SEARCH = "🔍 بحث"
@@ -23,6 +24,10 @@ BTN_BACK = "↩️ رجوع"
 BTN_FOLDERS = "📁 المجلدات"
 BTN_NEW_FOLDER = "➕ مجلد جديد"
 BTN_JOIN = "🔗 انضمام للمجموعات"
+BTN_STATUS = "🩺 الحالة العامة"
+BTN_STATUS_CHECK = "🔍 فحص مجموعات التخزين"
+BTN_STATUS_REFRESH = "🔄 تحديث الحالة"
+BTN_SORT = "🔃 فرز / ترتيب"
 
 _MAX_BUTTON_TEXT = 55
 
@@ -53,6 +58,18 @@ class FolderCB(CallbackData, prefix="fld"):
 class JoinCB(CallbackData, prefix="join"):
     action: str
     value: str = ""
+
+
+class StatusCB(CallbackData, prefix="sts"):
+    action: str
+
+
+class SortCB(CallbackData, prefix="srt"):
+    """Sorting panel: menu / set a field and direction / close."""
+
+    action: str
+    field: str = ""
+    direction: str = ""
 
 
 def _short(text: str, limit: int = _MAX_BUTTON_TEXT) -> str:
@@ -100,6 +117,11 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text=BTN_FOLDERS, callback_data=MenuCB(action="folders").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_STATUS, callback_data=MenuCB(action="status").pack()
         )
     )
     return builder.as_markup()
@@ -178,7 +200,9 @@ def categories_kb(
 
 
 def category_files_kb(
-    files: Sequence[StoredFile], category: FileCategory | str
+    files: Sequence[StoredFile],
+    category: FileCategory | str,
+    sort: SortSpec | None = None,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
@@ -187,6 +211,64 @@ def category_files_kb(
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
+    if files:
+        builder.row(_sort_button(sort or SortSpec()))
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def _sort_button(sort: SortSpec) -> InlineKeyboardButton:
+    """The single entry point of the sorting panel."""
+    return InlineKeyboardButton(
+        text=f"{BTN_SORT} · {views.sort_short(sort)}",
+        callback_data=SortCB(action="menu").pack(),
+    )
+
+
+def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
+    """Every ordering as one button, the active one marked with ✅.
+
+    Each field gets a row with its two directions, so the user never has to
+    combine a field and a separate «عكس الترتيب» step.
+    """
+    builder = InlineKeyboardBuilder()
+    options = (
+        (SortField.size, SortDirection.asc, "📦 الأصغر أولاً"),
+        (SortField.size, SortDirection.desc, "📦 الأكبر أولاً"),
+        (SortField.date, SortDirection.asc, "🕐 الأقدم أولاً"),
+        (SortField.date, SortDirection.desc, "🕐 الأحدث أولاً"),
+        (SortField.name, SortDirection.asc, "🔤 أ→ي / A→Z"),
+        (SortField.name, SortDirection.desc, "🔤 ي→أ / Z→A"),
+    )
+    for field, direction, label in options:
+        active = sort.field is field and sort.direction is direction
+        builder.button(
+            text=f"{'✅ ' if active else ''}{label}",
+            callback_data=SortCB(
+                action="set", field=field.value, direction=direction.value
+            ).pack(),
+        )
+    builder.adjust(2)
+    builder.row(
+        InlineKeyboardButton(
+            text="↩️ رجوع إلى القائمة",
+            callback_data=SortCB(action="close").pack(),
+        )
+    )
+    return builder.as_markup()
+
+
+def status_kb() -> InlineKeyboardMarkup:
+    """General status: re-run the storage check or refresh every number."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=BTN_STATUS_CHECK, callback_data=StatusCB(action="check").pack()
+        ),
+        InlineKeyboardButton(
+            text=BTN_STATUS_REFRESH, callback_data=StatusCB(action="refresh").pack()
+        ),
+    )
     builder.row(*nav_row())
     return builder.as_markup()
 
@@ -282,6 +364,7 @@ def folder_files_kb(
     files: Sequence[StoredFile],
     folder_id: str | None = None,
     favorite: bool = False,
+    sort: SortSpec | None = None,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for file in files:
@@ -290,6 +373,8 @@ def folder_files_kb(
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
+    if files:
+        builder.row(_sort_button(sort or SortSpec()))
     if folder_id:
         if favorite:
             # Manual order of the favourites, exactly as they appear in the library.
