@@ -29,10 +29,16 @@ class Folder:
     count: int = 0
     bytes: int = 0
     favorite: bool = False
+    favorite_order: int | None = None
 
     @property
     def size_human(self) -> str:
         return human_total(self.bytes)
+
+    @property
+    def favorite_sort_key(self) -> tuple[bool, int, str]:
+        """Order favourites by their manual position, then alphabetically."""
+        return (self.favorite_order is None, self.favorite_order or 0, self.name.casefold())
 
 
 @dataclass(frozen=True, slots=True)
