@@ -36,7 +36,7 @@ CATEGORY_LABELS: dict[FileCategory, str] = {
     FileCategory.other: "📦 أخرى",
 }
 
-# One label for the group that backs every category without its own id.
+# One label for the emergency group (a store, never a library category).
 FALLBACK_LABEL = "🛟 احتياطية"
 
 # The order of the category buttons (and of their lines) on the library screen.
@@ -304,6 +304,7 @@ def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
             "📊 إحصائيات — عدد الملفات والحجم الإجمالي",
             "📁 المجلدات — مجموعات افتراضية للتنظيم السريع",
             "🩺 الحالة العامة — البوت وقاعدة البيانات ومجموعات التخزين",
+            "🛟 الاحتياط — ملفات لم تُسجَّل بعد، مع زر إصلاح",
         ]
     )
 
@@ -321,6 +322,9 @@ def help_text() -> str:
         "المجلدات تسميات تنظيمية فقط؛ الملف يبقى في مجموعة تيليغرام الخاصة بفئته.\n"
         "داخل المكتبة أو أي مجلد: زر «🔃 فرز / ترتيب» يغيّر الترتيب حسب الحجم "
         "أو التاريخ أو الاسم، تصاعدياً أو تنازلياً.\n\n"
+        "🛟 الاحتياط — إن تعذّر تسجيل ملف في قاعدة البيانات يُحفظ في مجموعة "
+        "الاحتياط ولا يُنقل إلى المكتبة؛ وبعد عودة القاعدة اضغط «🔧 إصلاح» "
+        "ليُسجَّل كل ملف معلّق ثم يُنقل إلى مجموعته الصحيحة.\n\n"
         "🔗 انضمام للمجموعات — للمالك فقط: التحقق تلقائي من معرّف حسابك بلا كلمة سر، "
         "ثم رابط دعوة لاستخدام واحد وترقية تلقائية إلى مشرف."
     )
@@ -423,6 +427,73 @@ def category_text(
         lines.append(f"🔃 الترتيب: {sort_summary(sort or SortSpec())}")
         lines.append("اختر ملفاً لعرضه، أو غيّر الترتيب من الزر أدناه.")
     return "\n".join(lines).rstrip()
+
+
+def pending_text(
+    total: int,
+    by_category: Mapping[FileCategory, int] | None = None,
+    latest_name: str | None = None,
+    latest_reason: str | None = None,
+) -> str:
+    """The «🛟 الاحتياط» screen: what is waiting and how to repair it."""
+    lines = [
+        "🛟 <b>الاحتياط</b>",
+        "",
+        "الملف الذي تعذّر تسجيله في قاعدة البيانات يُحفظ هنا بدل ضياعه، "
+        "ولا يدخل المكتبة حتى يُسجَّل صفّه.",
+        "",
+    ]
+    if not total:
+        lines.append("✅ لا توجد ملفات معلّقة الآن.")
+        lines.append("")
+        lines.append(
+            "سيظهر هنا أي ملف يفشل تسجيله، مع إمكانية إصلاحه بزر «🔧 إصلاح»."
+        )
+        return "\n".join(lines)
+
+    lines.append(f"⏳ ملفات معلّقة: <b>{format_number(total)}</b>")
+    counts = by_category or {}
+    ordered = [category for category in CATEGORY_ORDER if category in counts]
+    ordered += [category for category in counts if category not in CATEGORY_ORDER]
+    if ordered:
+        lines.append("")
+        lines.append("<b>حسب النوع</b>")
+        for category in ordered:
+            lines.append(
+                f"{category_label(category)}: {format_number(counts[category])}"
+            )
+    if latest_name:
+        lines.append("")
+        lines.append(f"آخر ملف: {_escape(latest_name)}")
+    if latest_reason:
+        lines.append(f"سبب الفشل: {_escape(latest_reason)}")
+    lines.append("")
+    lines.append(
+        "بعد التأكد من عمل قاعدة البيانات اضغط «🔧 إصلاح»: يُسجَّل كل ملف "
+        "ثم يُنقل إلى مجموعته الصحيحة حسب نوعه."
+    )
+    return "\n".join(lines)
+
+
+def quarantined_text(
+    file_name: str, category: FileCategory | str, reason: str = ""
+) -> str:
+    """A file that could not be registered and was held in the fallback group."""
+    lines = [
+        "🛟 <b>حُفظ الملف في الاحتياط</b>",
+        "",
+        "تعذّر تسجيل الملف في قاعدة البيانات، فلم يُنقل إلى المكتبة.",
+        f"الملف: {_escape(file_name)}",
+        f"الفئة: {category_label(category)}",
+    ]
+    if reason:
+        lines.append(f"السبب: {_escape(reason)}")
+    lines.append("")
+    lines.append(
+        "بعد عودة قاعدة البيانات افتح «🛟 الاحتياط» واضغط «🔧 إصلاح» "
+        "ليُسجَّل الملف ثم يُنقل إلى مجموعته."
+    )
+    return "\n".join(lines)
 
 
 def search_prompt_text() -> str:
