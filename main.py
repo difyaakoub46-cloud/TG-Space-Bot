@@ -18,7 +18,6 @@ from src.bot.dispatcher import build_dispatcher
 from src.core.config import Settings
 from src.core.logging import setup_logging
 from src.services.container import build_services
-from src.utils.filetypes import FileCategory
 from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,8 @@ async def report_storage_health(settings: Settings, services) -> None:
     the mismatch is reported before any file is involved.
     """
     configured = settings.storage_chats()
-    missing = [category for category in FileCategory if category not in configured]
+    # With a fallback group configured no category is refused, so nothing is missing.
+    missing = settings.uncovered_categories()
 
     if not configured:
         logger.warning(

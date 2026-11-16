@@ -56,6 +56,8 @@ class StoredFile:
     storage_chat_id: int
     storage_message_id: int
     created_at: datetime
+    # SHA-256 of the file bytes; empty when the file was too large to read.
+    content_hash: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "StoredFile":
@@ -79,6 +81,7 @@ class StoredFile:
             storage_chat_id=int(row["chat_id"]),
             storage_message_id=int(row["message_id"]),
             created_at=_parse_datetime(row.get("created_at")),
+            content_hash=row.get("content_hash"),
         )
 
     @property
@@ -88,3 +91,8 @@ class StoredFile:
     @property
     def created_human(self) -> str:
         return format_datetime(self.created_at)
+
+    @property
+    def hash_short(self) -> str | None:
+        """Short form of the content fingerprint, for display."""
+        return f"{self.content_hash[:16]}…" if self.content_hash else None
