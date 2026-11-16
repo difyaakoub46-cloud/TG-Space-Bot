@@ -30,6 +30,7 @@ class StorageChatCheck:
     reachable: bool
     title: str | None = None
     reason: str | None = None
+    is_fallback: bool = False
 
 
 _MISSING_MESSAGE_MARKERS = (
@@ -130,6 +131,13 @@ class StorageService:
         for category, chat_id in self._settings.storage_chats().items():
             grouped.setdefault(self._current(int(chat_id)), set()).add(category)
 
+        # The fallback group receives every category without its own group, so it
+        # is checked too (an empty category set marks it as the fallback).
+        fallback = self._settings.storage_chat_fallback
+        fallback_id = self._current(int(fallback)) if fallback is not None else None
+        if fallback_id is not None and fallback_id not in grouped:
+            grouped[fallback_id] = set()
+
         checks: list[StorageChatCheck] = []
         for chat_id, categories in grouped.items():
             try:
@@ -151,6 +159,7 @@ class StorageService:
                         categories=frozenset(categories),
                         reachable=False,
                         reason=reason,
+                        is_fallback=chat_id == fallback_id,
                     )
                 )
             else:
@@ -163,6 +172,7 @@ class StorageService:
                         categories=frozenset(categories),
                         reachable=True,
                         title=chat.title,
+                        is_fallback=chat_id == fallback_id,
                     )
                 )
         return checks
