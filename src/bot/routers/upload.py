@@ -13,7 +13,7 @@ from aiogram.types import Message
 from src.bot import navigation, views
 from src.bot.keyboards import main_menu_kb
 from src.services.container import Services
-from src.services.files import DuplicateFileError
+from src.services.files import DuplicateFileError, QuarantinedFileError
 from src.utils.filetypes import extract_candidate
 from src.utils.telegram import safe_delete_message, safe_edit_text
 
@@ -52,6 +52,24 @@ async def handle_upload(
 
     try:
         record = await services.files.save_from_message(message, candidate)
+    except QuarantinedFileError as exc:
+        # The row could not be written: the file was held in the fallback group
+        # instead of the library, and «🔧 إصلاح» will finish the job later.
+        await safe_delete_message(bot, message.chat.id, message.message_id)
+        await safe_delete_message(bot, status.chat.id, status.message_id)
+        await navigation.navigate_message(
+            message,
+            state,
+            bot,
+            services,
+            {"k": "pending"},
+            notice=views.quarantined_text(
+                exc.pending.file_name,
+                exc.pending.category,
+                exc.pending.reason,
+            ),
+        )
+        return
     except DuplicateFileError as exc:
         # The same Telegram file is already stored: no second copy, just its page.
         await safe_delete_message(bot, message.chat.id, message.message_id)

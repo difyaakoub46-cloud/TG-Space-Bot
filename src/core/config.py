@@ -50,8 +50,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TG_SPACE_BOT_TOKEN", "BOT_TOKEN")
     )
     webhook_url: str = Field(
-        "",
-        validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL"),
+        "", validation_alias=AliasChoices("TG_SPACE_BOT_WEBHOOK_URL", "WEBHOOK_URL")
     )
 
     supabase_url: str = Field(validation_alias=AliasChoices("SUPABASE_URL"))
@@ -92,8 +91,9 @@ class Settings(BaseSettings):
         ),
     )
 
-    # One group can back every category that has no TG_STORAGE_CHAT_* value, so an
-    # unconfigured category is stored there instead of refusing the upload.
+    # The emergency group: any file whose registration in Supabase fails is copied
+    # here instead of the library, and «🔧 إصلاح» finishes it later. It never
+    # replaces a TG_STORAGE_CHAT_* value.
     storage_chat_fallback: OptionalChatId = Field(
         None,
         validation_alias=AliasChoices(
@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     def results_per_page(self) -> int:
         return max(1, min(self.page_size, MAX_PAGE_SIZE))
 
+    # Where the emergency registry lives. Point it at a persistent disk so the
+    # list of held files survives a restart.
+    pending_store_path: str = Field(
+        "data/pending_files.json",
+        validation_alias=AliasChoices("PENDING_STORE_PATH", "PENDING_PATH"),
+    )
+
     server_host: str = Field(
         "0.0.0.0", validation_alias=AliasChoices("TG_SPACE_BOT_HOST", "HOST")
     )
@@ -163,22 +170,23 @@ class Settings(BaseSettings):
         }
 
     def storage_chat_for(self, category: FileCategory) -> int:
-        """The group of one category, or the fallback group when it has none."""
+        """The group of one category.
+
+        The fallback group is not a substitute: it only holds files whose
+        registration failed, so a category without a group of its own is refused.
+        """
         chat_id = self.storage_chats().get(category)
-        if chat_id is None:
-            chat_id = self.storage_chat_fallback
         if chat_id is None:
             raise ConfigurationError(
                 f"لا توجد مجموعة تخزين مهيأة للفئة «{category.value}». "
-                "أضف المتغير TG_STORAGE_CHAT_<CATEGORY> أو المجموعة الاحتياطية "
-                "TG_STORAGE_CHAT_FALLBACK إلى إعدادات البيئة."
+                "أضف المتغير TG_STORAGE_CHAT_<CATEGORY> إلى إعدادات البيئة "
+                "(المجموعة الاحتياطية لا تحل محل مجموعة الفئة)."
             )
         return chat_id
 
     def uncovered_categories(self) -> list[FileCategory]:
-        """Categories that cannot be stored even with the fallback in place."""
-        if self.storage_chat_fallback is not None:
-            return []
+        """Categories with no storage group of their own (the fallback does not
+        count: it is an emergency store, not a library group)."""
         configured = self.storage_chats()
         return [category for category in FileCategory if category not in configured]
 
