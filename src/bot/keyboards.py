@@ -110,6 +110,10 @@ def sort_label() -> str:
     return pick("🔃 Sort", "🔃 فرز / ترتيب")
 
 
+def history_label() -> str:
+    return pick("🕘 History uploads", "🕘 سجل الرفع")
+
+
 def repair_label() -> str:
     return pick("🔧 Repair", "🔧 إصلاح")
 
@@ -153,6 +157,20 @@ class FolderCB(CallbackData, prefix="fld"):
 
 
 class JoinCB(CallbackData, prefix="join"):
+    action: str
+    value: str = ""
+
+
+class SavedCB(CallbackData, prefix="svd"):
+    """Walk through the files of one upload batch: previous / next."""
+
+    action: str
+    value: str = ""
+
+
+class HistoryCB(CallbackData, prefix="hist"):
+    """«History uploads»: pick a category, a date window or another page."""
+
     action: str
     value: str = ""
 
@@ -222,12 +240,27 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def settings_kb() -> InlineKeyboardMarkup:
-    """Settings: language, the group gate and help, nothing else."""
+def saved_screen_label(show: bool = True) -> str:
+    """The saved-file card toggle, with its current state on the button."""
+    state = pick("✅ On", "✅ مفعّلة") if show else pick("⛔ Off", "⛔ معطّلة")
+    return pick(
+        f"📨 Saved-file screen: {state}",
+        f"📨 شاشة «تم حفظ الملف»: {state}",
+    )
+
+
+def settings_kb(show_saved: bool = True) -> InlineKeyboardMarkup:
+    """Settings: language, the saved-file card, the group gate and help."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
             text=language_label(), callback_data=MenuCB(action="language").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=saved_screen_label(show_saved),
+            callback_data=MenuCB(action="toggle_saved").pack(),
         )
     )
     builder.row(
@@ -383,6 +416,11 @@ def categories_kb(
             callback_data=MenuCB(action="folders").pack(),
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=history_label(), callback_data=MenuCB(action="history").pack()
+        )
+    )
     builder.row(*nav_row())
     return builder.as_markup()
 
@@ -508,29 +546,61 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def saved_files_kb(
+def saved_nav_kb(
     files: Sequence[StoredFile],
-    duplicates: Sequence[StoredFile] = (),
+    index: int = 0,
+    duplicates: Sequence[str] = (),
     show_pending: bool = False,
 ) -> InlineKeyboardMarkup:
-    """An album's result: one row per file, so every file keeps its own actions.
+    """One uploaded file at a time, with «Next ▶» to reach the rest of the batch.
 
-    The left button opens the file's own card (send, delete, rename, folders), the
-    right one jumps straight to its folder picker, which is the quick way to put
-    each file of a batch into a folder of its own.
+    The batch is walked file by file so every file keeps its own card and its own
+    buttons (send, delete, rename, folders); the file name in the header says
+    where the walk stands (``file 2 of 6``).
     """
     builder = InlineKeyboardBuilder()
-    for file in (*files, *duplicates):
+    record = files[index]
+    duplicate = record.id in set(duplicates)
+    if not duplicate:
         builder.row(
             InlineKeyboardButton(
-                text=f"📄 {_short(file.file_name, 34)}",
-                callback_data=FileCB(action="view", file_id=file.id).pack(),
+                text=pick("📤 Send", "📤 إرسال"),
+                callback_data=FileCB(action="send", file_id=record.id).pack(),
             ),
             InlineKeyboardButton(
-                text=pick("📁 Folder", "📁 مجلد"),
-                callback_data=FileCB(action="folder", file_id=file.id).pack(),
+                text=pick("🗑 Delete", "🗑 حذف"),
+                callback_data=FileCB(action="delete", file_id=record.id).pack(),
             ),
         )
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("✏️ Rename", "✏️ إعادة تسمية"),
+            callback_data=FileCB(action="rename", file_id=record.id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=pick("📁 Add to a folder", "📁 إضافة إلى مجلد"),
+            callback_data=FileCB(action="folder", file_id=record.id).pack(),
+        ),
+    )
+
+    steps: list[InlineKeyboardButton] = []
+    if index > 0:
+        steps.append(
+            InlineKeyboardButton(
+                text=pick("◀ Previous", "◀ السابق"),
+                callback_data=SavedCB(action="go", value=str(index - 1)).pack(),
+            )
+        )
+    if index + 1 < len(files):
+        steps.append(
+            InlineKeyboardButton(
+                text=pick("Next ▶", "التالي ▶"),
+                callback_data=SavedCB(action="go", value=str(index + 1)).pack(),
+            )
+        )
+    if steps:
+        builder.row(*steps)
+
     if show_pending:
         builder.row(
             InlineKeyboardButton(
@@ -760,5 +830,77 @@ def search_prompt_kb() -> InlineKeyboardMarkup:
             text=cancel_label(), callback_data=MenuCB(action="cancel").pack()
         )
     )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+# History uploads
+# --------------------------------------------------------------------------- #
+def history_kb(
+    files: Sequence[StoredFile],
+    category: FileCategory | None = None,
+    span: str = "all",
+    page: int = 1,
+    total_pages: int = 1,
+) -> InlineKeyboardMarkup:
+    """The archive: a category row, a date-window row, the files, then the pages."""
+    builder = InlineKeyboardBuilder()
+
+    choices: list[tuple[FileCategory | None, str]] = [
+        (None, pick("🗂 All files", "🗂 كل الملفات"))
+    ]
+    choices += [(item, views.category_label(item)) for item in views.CATEGORY_ORDER]
+    category_buttons = [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if item is category else ''}{label}",
+            callback_data=HistoryCB(
+                action="cat", value=item.value if item is not None else "all"
+            ).pack(),
+        )
+        for item, label in choices
+    ]
+    # Two buttons per row, without mixing the two filter groups together.
+    for start in range(0, len(category_buttons), 2):
+        builder.row(*category_buttons[start : start + 2])
+
+    current = str(span or "all")
+    span_buttons = [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if value == current else ''}{views.history_span_label(value)}",
+            callback_data=HistoryCB(action="span", value=value).pack(),
+        )
+        for value in views.HISTORY_SPANS
+    ]
+    for start in range(0, len(span_buttons), 2):
+        builder.row(*span_buttons[start : start + 2])
+
+    for file in files:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📄 {_short(file.file_name, 45)}",
+                callback_data=FileCB(action="view", file_id=file.id).pack(),
+            )
+        )
+
+    if total_pages > 1:
+        controls: list[InlineKeyboardButton] = []
+        if page > 1:
+            controls.append(
+                InlineKeyboardButton(
+                    text=pick("◀ Previous", "◀ السابق"),
+                    callback_data=HistoryCB(action="page", value=str(page - 1)).pack(),
+                )
+            )
+        if page < total_pages:
+            controls.append(
+                InlineKeyboardButton(
+                    text=pick("Next ▶", "التالي ▶"),
+                    callback_data=HistoryCB(action="page", value=str(page + 1)).pack(),
+                )
+            )
+        if controls:
+            builder.row(*controls)
+
     builder.row(*nav_row())
     return builder.as_markup()
