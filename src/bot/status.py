@@ -21,7 +21,7 @@ from src.db.repository import SupabaseError
 from src.services.container import Services
 from src.services.storage import StorageChatCheck
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number, human_total
+from src.utils.formatters import format_number
 
 logger = logging.getLogger(__name__)
 
@@ -102,12 +102,13 @@ async def status_text(
     """Build the status screen; the storage check is run when not supplied."""
     settings = services.settings
 
+    # The call itself is what the latency line reports; its numbers belong to
+    # «Statistics», so they are not shown here.
     started = time.perf_counter()
     try:
-        stats = await services.files.stats()
+        await services.files.stats()
         database_error = None
     except (SupabaseError, OSError) as exc:
-        stats = {"total": 0, "total_bytes": 0, "categories": {}}
         database_error = str(exc)
     latency_ms = (time.perf_counter() - started) * 1000
 
@@ -124,7 +125,6 @@ async def status_text(
     reachable = [check for check in checks if check.reachable]
     broken = [check for check in checks if not check.reachable]
     allowed = settings.allowed_users()
-    categories = stats.get("categories") or {}
 
     lines = [
         pick("🩺 <b>General status</b>", "🩺 <b>الحالة العامة</b>"),
@@ -150,23 +150,16 @@ async def status_text(
             f"الجدول: <code>{_escape(settings.supabase_table)}</code> · "
             f"زمن الاستجابة: {latency_ms:.0f} م.ث",
         ),
-        pick(
-            f"Files: <b>{format_number(int(stats.get('total', 0)))}</b> · "
-            f"Size: <b>{_escape(human_total(int(stats.get('total_bytes', 0) or 0)))}</b>",
-            f"الملفات: <b>{format_number(int(stats.get('total', 0)))}</b> · "
-            f"الحجم: <b>{_escape(human_total(int(stats.get('total_bytes', 0) or 0)))}</b>",
-        ),
+        # The file counts and the total size live in «Statistics», so they are not
+        # repeated here: this screen only proves the database answered and how fast.
     ]
     if database_error:
         lines.append(
             pick(
-                f"⛔ Could not read the statistics: {_escape(database_error[:160])}",
+                f"⛔ Could not read the stats: {_escape(database_error[:160])}",
                 f"⛔ تعذّر قراءة الإحصائيات: {_escape(database_error[:160])}",
             )
         )
-    for category in views.CATEGORY_ORDER:
-        count = int(categories.get(category, 0) or 0)
-        lines.append(f"{views.category_label(category)}: {format_number(count)}")
 
     lines.extend(
         [
