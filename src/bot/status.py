@@ -2,11 +2,13 @@
 
 The same checks that run at startup are run again here, so the owner can confirm
 at any moment that every storage group still answers before uploading anything.
-The statistics and the reserve section are opened from this screen.
+The statistics, the group permissions and the reserve section are opened from this
+screen.
 
 Administrator rights have two levels of detail on purpose: one summary line in the
 overview (are they all enabled, some, or none), and a separate
-«🛡 Group permissions» section that names every missing right per group.
+«🛡 Group permissions» screen — reached like «📊 Statistics» — that names every
+missing right per group.
 """
 
 from __future__ import annotations
@@ -133,8 +135,13 @@ def _permissions_summary(checks: Sequence[StorageChatCheck]) -> str:
 
 
 def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
-    """The «Group permissions» section: every group, every missing right."""
-    lines = [pick("🛡 <b>Group permissions</b>", "🛡 <b>الصلاحيات للمجموعات</b>"), ""]
+    """The «Group permissions» screen: every group, every missing right."""
+    lines = [
+        pick("🛡 <b>Group permissions</b>", "🛡 <b>الصلاحيات للمجموعات</b>"),
+        "",
+        _permissions_summary(checks),
+        "",
+    ]
     readable = [check for check in checks if check.reachable]
     if not readable:
         lines.append(
@@ -216,13 +223,23 @@ def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
     lines.append(
         pick(
             "The seven rights come from the administrator screen of each group. "
-            "Enable all of them for the bot; the check refreshes with "
-            "«🔍 Check and update status».",
+            "Enable all of them for the bot; the check runs again every time you "
+            "open this section.",
             "الحقوق السبعة هي نفسها في شاشة المشرفين لكل مجموعة. فعّلها كلها للبوت؛ "
-            "ويتحدّث الفحص بزر «🔍 الفحص والتحديث الحالة».",
+            "ويتكرّر الفحص في كل مرة تفتح فيها هذا القسم.",
         )
     )
     return "\n".join(lines)
+
+
+async def group_permissions_text(services: Services) -> str:
+    """The «Group permissions» screen, re-reading the groups before listing them."""
+    try:
+        checks = await services.storage.check_chats()
+    except Exception:  # noqa: BLE001 - the screen must still render
+        logger.exception("Could not verify the storage groups")
+        checks = []
+    return permissions_text(checks)
 
 
 async def _bot_identity(bot) -> str:
@@ -369,8 +386,7 @@ async def status_text(
             + "، ".join(views.category_label(category) for category in uncovered)
         )
 
-    lines.extend(["", permissions_text(checks)])
     return "\n".join(lines)
 
 
-__all__ = ["permissions_text", "right_labels", "status_text"]
+__all__ = ["group_permissions_text", "permissions_text", "right_labels", "status_text"]
