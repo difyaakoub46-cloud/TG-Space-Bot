@@ -10,7 +10,7 @@ and each of the two sub-screens groups its own actions:
 
 * Settings → 🌐 Change language, 🔗 Join the groups, ❓ Help
 * General status → 🔍 Check and update status, 📊 Statistics,
-  🛟 Reserve and pending files
+  🛡 Group permissions, 🛟 Reserve and pending files
 
 Labels are functions, not constants: they must be built while the update's
 language is active. The ``*_TEXTS`` sets exist so the command handlers can match a
@@ -60,6 +60,14 @@ def status_check_label() -> str:
 
 def stats_label() -> str:
     return pick("📊 Statistics", "📊 الإحصائيات")
+
+
+def permissions_label() -> str:
+    return pick("🛡 Group permissions", "🛡 الصلاحيات للمجموعات")
+
+
+def permissions_check_label() -> str:
+    return pick("🔍 Re-check permissions", "🔍 إعادة فحص الصلاحيات")
 
 
 def pending_label() -> str:
@@ -255,7 +263,7 @@ def language_kb(current: Language) -> InlineKeyboardMarkup:
 
 
 def status_kb() -> InlineKeyboardMarkup:
-    """General status: refresh, then the statistics and the reserve section."""
+    """General status: refresh, statistics, permissions and the reserve section."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -270,7 +278,26 @@ def status_kb() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
+            text=permissions_label(),
+            callback_data=MenuCB(action="permissions").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=pending_label(), callback_data=MenuCB(action="pending").pack()
+        )
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def permissions_kb() -> InlineKeyboardMarkup:
+    """«Group permissions»: re-read the groups, then the shared back row."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=permissions_check_label(),
+            callback_data=MenuCB(action="permissions_check").pack(),
         )
     )
     builder.row(*nav_row())
