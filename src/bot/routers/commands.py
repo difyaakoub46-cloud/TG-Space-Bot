@@ -86,7 +86,31 @@ async def menu_settings_callback(
     """Open the settings screen (language, groups, help)."""
     await views.reset_flow(state)
     await navigation.navigate_callback(
-        callback, state, bot, services, {"k": "settings"}
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "settings", "u": int(callback.from_user.id)},
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "toggle_saved"))
+async def menu_toggle_saved_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Turn the «✅ The file was saved» card on or off for this user."""
+    user_id = int(callback.from_user.id)
+    show = services.preferences.show_saved_screen(user_id)
+    show = await services.preferences.set_saved_screen(user_id, not show)
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "settings", "u": user_id},
+        notice=views.saved_screen_changed_text(show),
+        push=False,
     )
 
 

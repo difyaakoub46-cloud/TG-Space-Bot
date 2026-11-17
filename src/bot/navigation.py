@@ -13,6 +13,7 @@ opened from.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot
@@ -30,11 +31,13 @@ from src.bot.keyboards import (
     folders_kb,
     groups_kb,
     help_kb,
+    history_kb,
     language_kb,
     main_menu_kb,
     pending_kb,
     permissions_kb,
     pick_folder_kb,
+    saved_nav_kb,
     search_list_kb,
     search_prompt_kb,
     settings_kb,
@@ -165,7 +168,47 @@ async def build(
         )
 
     if kind == "settings":
-        return views.settings_text(), settings_kb()
+        user_id = int(screen.get("u") or 0) or None
+        show_saved = services.preferences.show_saved_screen(user_id)
+        return views.settings_text(show_saved), settings_kb(show_saved)
+
+    if kind == "saved":
+        # A whole upload batch: one file per screen, walked with «Next ▶».
+        ids = [part for part in str(screen.get("ids") or "").split(",") if part]
+        fetched = await asyncio.gather(*(services.files.get(part) for part in ids))
+        records = [record for record in fetched if record is not None]
+        if records:
+            index = min(max(0, int(screen.get("i") or 0)), len(records) - 1)
+            duplicates = [
+                part for part in str(screen.get("dup") or "").split(",") if part
+            ]
+            pending = int(screen.get("p") or 0)
+            failures = int(screen.get("x") or 0)
+            return (
+                views.saved_batch_text(
+                    records, index, duplicates, pending, failures
+                ),
+                saved_nav_kb(
+                    records,
+                    index,
+                    duplicates,
+                    show_pending=bool(pending),
+                ),
+            )
+
+    if kind == "history":
+        category_value = str(screen.get("c") or "")
+        category = parse_category(category_value) if category_value else None
+        span = str(screen.get("r") or "all")
+        per_page = services.settings.results_per_page()
+        files, total, page = await services.files.history_page(
+            category, span, page=_page(screen), per_page=per_page
+        )
+        pages = max(1, -(-total // per_page))
+        return (
+            views.history_text(files, total, category, span, page, pages),
+            history_kb(files, category, span, page, pages),
+        )
 
     if kind == "language":
         language = get_language()
