@@ -437,7 +437,7 @@ def category_files_kb(
             )
             controls.append(
                 InlineKeyboardButton(
-                    text=pick("Last ⏭", "الأخيرة ⏭"),
+                    text=pick("Last ⏭", "⏭ الأخيرة"),
                     callback_data=CategoryCB(name=value, page=total_pages).pack(),
                 )
             )
@@ -508,6 +508,39 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def saved_files_kb(
+    files: Sequence[StoredFile],
+    duplicates: Sequence[StoredFile] = (),
+    show_pending: bool = False,
+) -> InlineKeyboardMarkup:
+    """An album's result: one row per file, so every file keeps its own actions.
+
+    The left button opens the file's own card (send, delete, rename, folders), the
+    right one jumps straight to its folder picker, which is the quick way to put
+    each file of a batch into a folder of its own.
+    """
+    builder = InlineKeyboardBuilder()
+    for file in (*files, *duplicates):
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📄 {_short(file.file_name, 34)}",
+                callback_data=FileCB(action="view", file_id=file.id).pack(),
+            ),
+            InlineKeyboardButton(
+                text=pick("📁 Folder", "📁 مجلد"),
+                callback_data=FileCB(action="folder", file_id=file.id).pack(),
+            ),
+        )
+    if show_pending:
+        builder.row(
+            InlineKeyboardButton(
+                text=pending_label(), callback_data=MenuCB(action="pending").pack()
+            )
+        )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
 def delete_confirm_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -570,7 +603,7 @@ def folders_kb(
             )
             controls.append(
                 InlineKeyboardButton(
-                    text=pick("Last ⏭", "الأخيرة ⏭"),
+                    text=pick("Last ⏭", "⏭ الأخيرة"),
                     callback_data=FolderCB(
                         action="page", value=str(total_pages)
                     ).pack(),
