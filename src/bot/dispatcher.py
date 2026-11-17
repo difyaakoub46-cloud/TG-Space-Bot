@@ -59,8 +59,10 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher.callback_query.outer_middleware(access_guard)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
-    # Member updates only need the services: the owner check happens in the handler.
+    # Member and join-request updates only need the services: the owner check and
+    # the allow-list live in the handlers.
     dispatcher.chat_member.outer_middleware(middleware)
+    dispatcher.chat_join_request.outer_middleware(middleware)
 
     # Order matters: commands first, the catch-all fallback last.
     dispatcher.include_routers(
