@@ -1,4 +1,21 @@
-"""Inline keyboard builders and callback-data factories."""
+"""Inline keyboard builders and callback-data factories.
+
+The menu hierarchy is:
+
+    📚 Library                         (one wide button)
+    🔍 Search   |   ⚙️ Settings
+    🩺 General status                  (one wide button)
+
+and each of the two sub-screens groups its own actions:
+
+* Settings → 🌐 Change language, 🔗 Join the groups, ❓ Help
+* General status → 🔍 Check and update status, 📊 Statistics,
+  🛟 Reserve and pending files
+
+Labels are functions, not constants: they must be built while the update's
+language is active. The ``*_TEXTS`` sets exist so the command handlers can match a
+typed button in either language.
+"""
 
 from __future__ import annotations
 
@@ -9,32 +26,100 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
+from src.core.i18n import Language, pick
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 from src.utils.sorting import SortDirection, SortField, SortSpec
 
-BTN_LIBRARY = "📚 المكتبة"
-BTN_SEARCH = "🔍 بحث"
-BTN_STATS = "📊 إحصائيات"
-BTN_HELP = "❓ مساعدة"
-BTN_CANCEL = "❌ إلغاء"
-BTN_MAIN = "🔙 القائمة الرئيسية"
-BTN_BACK = "↩️ رجوع"
-BTN_FOLDERS = "📁 المجلدات"
-BTN_NEW_FOLDER = "➕ مجلد جديد"
-BTN_JOIN = "🔗 انضمام للمجموعات"
-BTN_STATUS = "🩺 الحالة العامة"
-BTN_STATUS_CHECK = "🔍 فحص المجموعات وتحديث الحالة"
-BTN_SORT = "🔃 فرز / ترتيب"
-BTN_PENDING = "🛟 الاحتياط"
-BTN_REPAIR = "🔧 إصلاح"
-
 _MAX_BUTTON_TEXT = 55
 
 
+# --------------------------------------------------------------------------- #
+# Labels (both languages, so a typed button is recognised either way)
+# --------------------------------------------------------------------------- #
+def library_label() -> str:
+    return pick("📚 Library", "📚 المكتبة")
+
+
+def search_label() -> str:
+    return pick("🔍 Search", "🔍 بحث")
+
+
+def settings_label() -> str:
+    return pick("⚙️ Settings", "⚙️ الإعدادات")
+
+
+def status_label() -> str:
+    return pick("🩺 General status", "🩺 الحالة العامة")
+
+
+def status_check_label() -> str:
+    return pick("🔍 Check and update status", "🔍 الفحص والتحديث الحالة")
+
+
+def stats_label() -> str:
+    return pick("📊 Statistics", "📊 الإحصائيات")
+
+
+def pending_label() -> str:
+    return pick("🛟 Reserve and pending files", "🛟 قسم الاحتياط والملفات المعلقة")
+
+
+def language_label() -> str:
+    return pick("🌐 Change language", "🌐 تغيير اللغة")
+
+
+def join_label() -> str:
+    return pick("🔗 Join the groups", "🔗 الانضمام إلى المجموعات")
+
+
+def help_label() -> str:
+    return pick("❓ Help", "❓ مساعدة")
+
+
+def cancel_label() -> str:
+    return pick("❌ Cancel", "❌ إلغاء")
+
+
+def main_label() -> str:
+    return pick("🔙 Main menu", "🔙 القائمة الرئيسية")
+
+
+def back_label() -> str:
+    return pick("↩️ Back", "↩️ رجوع")
+
+
+def folders_label() -> str:
+    return pick("📁 Folders", "📁 المجلدات")
+
+
+def new_folder_label() -> str:
+    return pick("➕ New folder", "➕ مجلد جديد")
+
+
+def sort_label() -> str:
+    return pick("🔃 Sort", "🔃 فرز / ترتيب")
+
+
+def repair_label() -> str:
+    return pick("🔧 Repair", "🔧 إصلاح")
+
+
+# A typed button may arrive in either language, whatever the current setting is.
+LIBRARY_TEXTS = frozenset({"📚 Library", "📚 المكتبة"})
+SEARCH_TEXTS = frozenset({"🔍 Search", "🔍 بحث"})
+SETTINGS_TEXTS = frozenset({"⚙️ Settings", "⚙️ الإعدادات"})
+STATUS_TEXTS = frozenset({"🩺 General status", "🩺 الحالة العامة"})
+HELP_TEXTS = frozenset({"❓ Help", "❓ مساعدة"})
+
+
+# --------------------------------------------------------------------------- #
+# Callback data
+# --------------------------------------------------------------------------- #
 class MenuCB(CallbackData, prefix="menu"):
     action: str
+    value: str = ""
 
 
 class CategoryCB(CallbackData, prefix="cat"):
@@ -76,6 +161,9 @@ class SortCB(CallbackData, prefix="srt"):
     direction: str = ""
 
 
+# --------------------------------------------------------------------------- #
+# Small helpers
+# --------------------------------------------------------------------------- #
 def _short(text: str, limit: int = _MAX_BUTTON_TEXT) -> str:
     text = " ".join(str(text).split())
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
@@ -83,56 +171,109 @@ def _short(text: str, limit: int = _MAX_BUTTON_TEXT) -> str:
 
 def _main_menu_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(
-        text=BTN_MAIN, callback_data=MenuCB(action="main").pack()
+        text=main_label(), callback_data=MenuCB(action="main").pack()
     )
 
 
 def _back_button() -> InlineKeyboardButton:
     """Go back one screen; unlike the main menu it deletes nothing."""
     return InlineKeyboardButton(
-        text=BTN_BACK, callback_data=MenuCB(action="back").pack()
+        text=back_label(), callback_data=MenuCB(action="back").pack()
     )
 
 
 def nav_row() -> tuple[InlineKeyboardButton, InlineKeyboardButton]:
-    """The shared [رجوع] [القائمة الرئيسية] row."""
+    """The shared [Back] [Main menu] row."""
     return _back_button(), _main_menu_button()
 
 
+# --------------------------------------------------------------------------- #
+# Main menu and its two sub-screens
+# --------------------------------------------------------------------------- #
 def main_menu_kb() -> InlineKeyboardMarkup:
+    """Library on top, search + settings in the middle, status at the bottom."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text=BTN_LIBRARY, callback_data=MenuCB(action="categories").pack()
-        ),
-        InlineKeyboardButton(
-            text=BTN_SEARCH, callback_data=MenuCB(action="search").pack()
-        ),
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text=BTN_STATS, callback_data=MenuCB(action="stats").pack()
-        ),
-        InlineKeyboardButton(
-            text=BTN_HELP, callback_data=MenuCB(action="help").pack()
-        ),
-    )
-    # Second section: the virtual folders that group files of the library above.
-    builder.row(
-        InlineKeyboardButton(
-            text=BTN_FOLDERS, callback_data=MenuCB(action="folders").pack()
+            text=library_label(), callback_data=MenuCB(action="categories").pack()
         )
     )
     builder.row(
         InlineKeyboardButton(
-            text=BTN_STATUS, callback_data=MenuCB(action="status").pack()
+            text=search_label(), callback_data=MenuCB(action="search").pack()
+        ),
+        InlineKeyboardButton(
+            text=settings_label(), callback_data=MenuCB(action="settings").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=status_label(), callback_data=MenuCB(action="status").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def settings_kb() -> InlineKeyboardMarkup:
+    """Settings: language, the group gate and help, nothing else."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=language_label(), callback_data=MenuCB(action="language").pack()
         )
     )
     builder.row(
         InlineKeyboardButton(
-            text=BTN_PENDING, callback_data=MenuCB(action="pending").pack()
+            text=join_label(), callback_data=MenuCB(action="join").pack()
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=help_label(), callback_data=MenuCB(action="help").pack()
+        )
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def language_kb(current: Language) -> InlineKeyboardMarkup:
+    """The two languages, the active one marked with ✅."""
+    builder = InlineKeyboardBuilder()
+    for language, label in (
+        (Language.en, "English"),
+        (Language.ar, "العربية"),
+    ):
+        mark = "✅ " if current is language else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{mark}{label}",
+                callback_data=MenuCB(action="set_lang", value=language.value).pack(),
+            )
+        )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def status_kb() -> InlineKeyboardMarkup:
+    """General status: refresh, then the statistics and the reserve section."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=status_check_label(),
+            callback_data=MenuCB(action="status_check").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=stats_label(), callback_data=MenuCB(action="stats").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=pending_label(), callback_data=MenuCB(action="pending").pack()
+        )
+    )
+    builder.row(*nav_row())
     return builder.as_markup()
 
 
@@ -143,14 +284,9 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
 
 
 def help_kb() -> InlineKeyboardMarkup:
-    """Help screen: the navigation row first, then the owner-only gate."""
+    """Help is a leaf now: the group gate lives in Settings."""
     builder = InlineKeyboardBuilder()
     builder.row(*nav_row())
-    builder.row(
-        InlineKeyboardButton(
-            text=BTN_JOIN, callback_data=MenuCB(action="join").pack()
-        )
-    )
     return builder.as_markup()
 
 
@@ -167,6 +303,22 @@ def groups_kb(groups: Sequence[tuple[str, str]]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def pending_kb(total: int = 0) -> InlineKeyboardMarkup:
+    """The reserve screen: repair only makes sense when files are waiting."""
+    builder = InlineKeyboardBuilder()
+    if total:
+        builder.row(
+            InlineKeyboardButton(
+                text=repair_label(), callback_data=MenuCB(action="repair").pack()
+            )
+        )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+# Library screens
+# --------------------------------------------------------------------------- #
 def categories_kb(
     totals: Mapping[FileCategory, tuple[int, int]],
     favorites: Sequence[Folder] = (),
@@ -197,9 +349,9 @@ def categories_kb(
     builder.row(
         InlineKeyboardButton(
             text=(
-                f"{BTN_FOLDERS} ({format_number(folder_count)})"
+                f"{folders_label()} ({format_number(folder_count)})"
                 if folder_count
-                else BTN_FOLDERS
+                else folders_label()
             ),
             callback_data=MenuCB(action="folders").pack(),
         )
@@ -211,7 +363,7 @@ def categories_kb(
 def _sort_button(sort: SortSpec) -> InlineKeyboardButton:
     """The single entry point of the sorting panel."""
     return InlineKeyboardButton(
-        text=f"{BTN_SORT} · {views.sort_short(sort)}",
+        text=f"{sort_label()} · {views.sort_short(sort)}",
         callback_data=SortCB(action="menu").pack(),
     )
 
@@ -239,26 +391,26 @@ def category_files_kb(
         if page > 1:
             controls.append(
                 InlineKeyboardButton(
-                    text="⏮ الأولى",
+                    text=pick("⏮ First", "⏮ الأولى"),
                     callback_data=CategoryCB(name=value, page=1).pack(),
                 )
             )
             controls.append(
                 InlineKeyboardButton(
-                    text="◀ السابق",
+                    text=pick("◀ Previous", "◀ السابق"),
                     callback_data=CategoryCB(name=value, page=page - 1).pack(),
                 )
             )
         if page < total_pages:
             controls.append(
                 InlineKeyboardButton(
-                    text="التالي ▶",
+                    text=pick("Next ▶", "التالي ▶"),
                     callback_data=CategoryCB(name=value, page=page + 1).pack(),
                 )
             )
             controls.append(
                 InlineKeyboardButton(
-                    text="الأخيرة ⏭",
+                    text=pick("Last ⏭", "الأخيرة ⏭"),
                     callback_data=CategoryCB(name=value, page=total_pages).pack(),
                 )
             )
@@ -272,19 +424,15 @@ def category_files_kb(
 
 
 def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
-    """Every ordering as one button, the active one marked with ✅.
-
-    Each field gets a row with its two directions, so the user never has to
-    combine a field and a separate «عكس الترتيب» step.
-    """
+    """Every ordering as one button, the active one marked with ✅."""
     builder = InlineKeyboardBuilder()
     options = (
-        (SortField.size, SortDirection.asc, "📦 الأصغر أولاً"),
-        (SortField.size, SortDirection.desc, "📦 الأكبر أولاً"),
-        (SortField.date, SortDirection.asc, "🕐 الأقدم أولاً"),
-        (SortField.date, SortDirection.desc, "🕐 الأحدث أولاً"),
-        (SortField.name, SortDirection.asc, "🔤 أ→ي / A→Z"),
-        (SortField.name, SortDirection.desc, "🔤 ي→أ / Z→A"),
+        (SortField.size, SortDirection.asc, pick("📦 Smallest first", "📦 الأصغر أولاً")),
+        (SortField.size, SortDirection.desc, pick("📦 Largest first", "📦 الأكبر أولاً")),
+        (SortField.date, SortDirection.asc, pick("🕐 Oldest first", "🕐 الأقدم أولاً")),
+        (SortField.date, SortDirection.desc, pick("🕐 Newest first", "🕐 الأحدث أولاً")),
+        (SortField.name, SortDirection.asc, pick("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z")),
+        (SortField.name, SortDirection.desc, pick("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A")),
     )
     for field, direction, label in options:
         active = sort.field is field and sort.direction is direction
@@ -297,58 +445,35 @@ def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
     builder.adjust(2)
     builder.row(
         InlineKeyboardButton(
-            text="↩️ رجوع إلى القائمة",
+            text=pick("↩️ Back to the list", "↩️ رجوع إلى القائمة"),
             callback_data=SortCB(action="close").pack(),
         )
     )
     return builder.as_markup()
 
 
-def pending_kb(total: int = 0) -> InlineKeyboardMarkup:
-    """The emergency screen: repair only makes sense when files are waiting."""
-    builder = InlineKeyboardBuilder()
-    if total:
-        builder.row(
-            InlineKeyboardButton(
-                text=BTN_REPAIR, callback_data=MenuCB(action="repair").pack()
-            )
-        )
-    builder.row(*nav_row())
-    return builder.as_markup()
-
-
-def status_kb() -> InlineKeyboardMarkup:
-    """General status: one button re-runs the check and refreshes every number."""
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text=BTN_STATUS_CHECK,
-            callback_data=MenuCB(action="status_check").pack(),
-        )
-    )
-    builder.row(*nav_row())
-    return builder.as_markup()
-
-
+# --------------------------------------------------------------------------- #
+# File screens
+# --------------------------------------------------------------------------- #
 def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📤 إرسال",
+            text=pick("📤 Send", "📤 إرسال"),
             callback_data=FileCB(action="send", file_id=file_id).pack(),
         ),
         InlineKeyboardButton(
-            text="🗑 حذف",
+            text=pick("🗑 Delete", "🗑 حذف"),
             callback_data=FileCB(action="delete", file_id=file_id).pack(),
         ),
     )
     builder.row(
         InlineKeyboardButton(
-            text="✏️ إعادة تسمية",
+            text=pick("✏️ Rename", "✏️ إعادة تسمية"),
             callback_data=FileCB(action="rename", file_id=file_id).pack(),
         ),
         InlineKeyboardButton(
-            text="📁 إضافة إلى مجلد",
+            text=pick("📁 Add to a folder", "📁 إضافة إلى مجلد"),
             callback_data=FileCB(action="folder", file_id=file_id).pack(),
         ),
     )
@@ -356,6 +481,23 @@ def file_actions_kb(file_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def delete_confirm_kb(file_id: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("✅ Yes, delete", "✅ نعم، احذف"),
+            callback_data=FileCB(action="confirm", file_id=file_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=cancel_label(), callback_data=MenuCB(action="main").pack()
+        ),
+    )
+    return builder.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+# Folders
+# --------------------------------------------------------------------------- #
 def folders_kb(
     folders: Sequence[Folder], page: int = 1, total_pages: int = 1
 ) -> InlineKeyboardMarkup:
@@ -372,7 +514,9 @@ def folders_kb(
     if total_pages > 1:
         builder.row(
             InlineKeyboardButton(
-                text=f"صفحة {page} من {total_pages}",
+                text=pick(
+                    f"Page {page} of {total_pages}", f"صفحة {page} من {total_pages}"
+                ),
                 callback_data=FolderCB(action="noop").pack(),
             )
         )
@@ -380,26 +524,26 @@ def folders_kb(
         if page > 1:
             controls.append(
                 InlineKeyboardButton(
-                    text="⏮ الأولى",
+                    text=pick("⏮ First", "⏮ الأولى"),
                     callback_data=FolderCB(action="page", value="1").pack(),
                 )
             )
             controls.append(
                 InlineKeyboardButton(
-                    text="◀ السابق",
+                    text=pick("◀ Previous", "◀ السابق"),
                     callback_data=FolderCB(action="page", value=str(page - 1)).pack(),
                 )
             )
         if page < total_pages:
             controls.append(
                 InlineKeyboardButton(
-                    text="التالي ▶",
+                    text=pick("Next ▶", "التالي ▶"),
                     callback_data=FolderCB(action="page", value=str(page + 1)).pack(),
                 )
             )
             controls.append(
                 InlineKeyboardButton(
-                    text="الأخيرة ⏭",
+                    text=pick("Last ⏭", "الأخيرة ⏭"),
                     callback_data=FolderCB(
                         action="page", value=str(total_pages)
                     ).pack(),
@@ -410,7 +554,7 @@ def folders_kb(
 
     builder.row(
         InlineKeyboardButton(
-            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
+            text=new_folder_label(), callback_data=FolderCB(action="new").pack()
         )
     )
     builder.row(*nav_row())
@@ -437,13 +581,13 @@ def folder_files_kb(
             # Manual order of the favourites, exactly as they appear in the library.
             builder.row(
                 InlineKeyboardButton(
-                    text="⬆️ تقديم",
+                    text=pick("⬆️ Move up", "⬆️ تقديم"),
                     callback_data=FolderCB(
                         action="move_up", value=folder_id
                     ).pack(),
                 ),
                 InlineKeyboardButton(
-                    text="⬇️ تأخير",
+                    text=pick("⬇️ Move down", "⬇️ تأخير"),
                     callback_data=FolderCB(
                         action="move_down", value=folder_id
                     ).pack(),
@@ -452,9 +596,9 @@ def folder_files_kb(
         builder.row(
             InlineKeyboardButton(
                 text=(
-                    "🌟 إزالة من المفضلة"
+                    pick("🌟 Remove from favourites", "🌟 إزالة من المفضلة")
                     if favorite
-                    else "⭐ إضافة إلى المفضلة"
+                    else pick("⭐ Add to favourites", "⭐ إضافة إلى المفضلة")
                 ),
                 callback_data=FolderCB(
                     action="unfavorite" if favorite else "favorite",
@@ -464,7 +608,7 @@ def folder_files_kb(
         )
         builder.row(
             InlineKeyboardButton(
-                text="🗑 حذف المجلد",
+                text=pick("🗑 Delete the folder", "🗑 حذف المجلد"),
                 callback_data=FolderCB(action="delete", value=folder_id).pack(),
             )
         )
@@ -477,11 +621,11 @@ def folder_delete_confirm_kb(folder_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="✅ نعم، احذف المجلد",
+            text=pick("✅ Yes, delete the folder", "✅ نعم، احذف المجلد"),
             callback_data=FolderCB(action="confirm_delete", value=folder_id).pack(),
         ),
         InlineKeyboardButton(
-            text=BTN_CANCEL,
+            text=cancel_label(),
             callback_data=FolderCB(action="open", value=folder_id).pack(),
         ),
     )
@@ -498,27 +642,16 @@ def pick_folder_kb(folders: Sequence[Folder]) -> InlineKeyboardMarkup:
     builder.adjust(1)
     builder.row(
         InlineKeyboardButton(
-            text=BTN_NEW_FOLDER, callback_data=FolderCB(action="new").pack()
+            text=new_folder_label(), callback_data=FolderCB(action="new").pack()
         )
     )
     builder.row(*nav_row())
     return builder.as_markup()
 
 
-def delete_confirm_kb(file_id: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="✅ نعم، احذف",
-            callback_data=FileCB(action="confirm", file_id=file_id).pack(),
-        ),
-        InlineKeyboardButton(
-            text=BTN_CANCEL, callback_data=MenuCB(action="main").pack()
-        ),
-    )
-    return builder.as_markup()
-
-
+# --------------------------------------------------------------------------- #
+# Search
+# --------------------------------------------------------------------------- #
 def search_list_kb(
     results: Sequence[StoredFile],
     page: int,
@@ -536,14 +669,14 @@ def search_list_kb(
     if page > 1:
         navigation.append(
             InlineKeyboardButton(
-                text="◀ السابق",
+                text=pick("◀ Previous", "◀ السابق"),
                 callback_data=SearchCB(action="page", value=str(page - 1)).pack(),
             )
         )
     if page < total_pages:
         navigation.append(
             InlineKeyboardButton(
-                text="التالي ▶",
+                text=pick("Next ▶", "التالي ▶"),
                 callback_data=SearchCB(action="page", value=str(page + 1)).pack(),
             )
         )
@@ -552,7 +685,8 @@ def search_list_kb(
 
     builder.row(
         InlineKeyboardButton(
-            text="🔍 بحث جديد", callback_data=MenuCB(action="search").pack()
+            text=pick("🔍 New search", "🔍 بحث جديد"),
+            callback_data=MenuCB(action="search").pack(),
         )
     )
     builder.row(*nav_row())
@@ -563,7 +697,7 @@ def search_prompt_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text=BTN_CANCEL, callback_data=MenuCB(action="cancel").pack()
+            text=cancel_label(), callback_data=MenuCB(action="cancel").pack()
         )
     )
     builder.row(*nav_row())
