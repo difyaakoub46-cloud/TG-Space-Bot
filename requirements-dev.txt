@@ -1,0 +1,7 @@
+# Development and verification dependencies (not needed to run the bot).
+-r requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.23
+# scripts/verify_schema.py starts a private PostgreSQL when VERIFY_DATABASE_URL is
+# not set. It downloads its own server binaries, so it is optional but handy.
+pgserver>=0.1
