@@ -215,7 +215,7 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
     lines.append(
         pick(
             f"⏳ Pending now: {format_number(remaining)}",
-            f"⏳ Pending now: {format_number(remaining)}",
+            f"⏳ المعلّق الآن: {format_number(remaining)}",
         )
     )
     if report.errors:
