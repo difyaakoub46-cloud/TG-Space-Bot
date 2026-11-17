@@ -35,10 +35,11 @@ temporary one on `VERIFY_DATABASE_URL`, or on a private PostgreSQL started by
 
 ## Architecture
 
-- `src/core/` — settings and logging.
+- `src/core/` — settings, logging and the two-language core (`i18n.py`).
 - `src/db/` — PostgREST client and row models.
-- `src/services/` — composition root, Telegram storage backend, file operations.
-- `src/bot/` — dispatcher, middleware, keyboards, views, states and routers.
+- `src/services/` — composition root, Telegram storage backend, file operations,
+  the emergency registry and the per-user preferences.
+- `src/bot/` — dispatcher, middleware, keyboards, views, navigation, states and routers.
 - `src/web/` — FastAPI keep-alive app.
 - `src/utils/` — classification, formatting, sorting and Telegram helpers.
 
@@ -48,15 +49,45 @@ The bot keeps one persistent message per chat. Commands, the library and the
 search flow render that same message with `edit_message_text` through
 `views.set_screen` / `views.set_screen_cb`, so navigation never floods the chat.
 The only extra messages are the upload status bubble and copies explicitly
-requested with the «إرسال» button.
+requested with the «Send» button.
 
 Callback data is typed with `CallbackData` factories in `src/bot/keyboards.py`
 (`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`, `FolderCB`, `JoinCB`, `SortCB`), so
-routers filter and unpack it instead of parsing raw strings.
+routers filter and unpack it instead of parsing raw strings. Screens are rebuilt
+from a small JSON key by `src/bot/navigation.py`, which is what lets «↩️ Back»
+return to the previous screen (the trail lives in the FSM data).
+
+## Menu
+
+```
+📚 Library                        (one wide button)
+🔍 Search   |   ⚙️ Settings
+🩺 General status                 (one wide button)
+
+⚙️ Settings        → 🌐 Change language · 🔗 Join the groups · ❓ Help
+🩺 General status  → 🔍 Check and update status · 📊 Statistics ·
+                     🛟 Reserve and pending files
+```
+
+The statistics and the reserve section are opened from the status screen, so
+«Back» returns there instead of jumping to the main menu.
+
+## Languages
+
+Every screen exists in English and in Arabic, chosen from «⚙️ Settings» →
+«🌐 Change language». English is the default, and the choice is stored per user in
+`PREFERENCES_PATH` (a small JSON file written atomically, next to the emergency
+registry), so a restart does not forget it.
+
+Texts are written at the call site with `pick(english, arabic)` from
+`src/core/i18n.py`: both versions sit next to each other, so a screen is never
+half translated. The middleware installs the caller's language for the duration of
+one update and resets it afterwards, and the typed main-menu buttons are matched
+in either language.
 
 ## Sorting and paging
 
-Inside a library category or a folder, «🔃 فرز / ترتيب» opens a panel with size,
+Inside a library category or a folder, «🔃 Sort» opens a panel with size,
 date and name orderings in both directions (the active one is marked ✅). The
 choice is kept in the screen key (`s` / `d`), so it survives opening a file and
 coming back, and the list is re-rendered with `edit_message_text`.
@@ -73,11 +104,11 @@ without Arabic diacritics and with the alef/ya variants folded.
 
 Every incoming file is copied into its category group and recorded in Supabase.
 `file_unique_id` is unique in the database, so sending the same Telegram file
-twice shows «الملف موجود أصلاً» and stores no second copy. Files up to
+twice shows «the file is already stored» and stores no second copy. Files up to
 `HASH_MAX_BYTES` also get a SHA-256 `content_hash`, shown on the file screen, so
 two files with the same name but different content stay distinguishable.
 
-The «🩺 الحالة العامة» screen (and the startup report sent to `OWNER_ID`) reaches
+The «🩺 General status» screen (and the startup report sent to `OWNER_ID`) reaches
 every configured group, including the emergency one, and lists the ids the bot
 cannot use yet.
 
@@ -91,9 +122,10 @@ Supabase:
   fresh copy is pulled back out of the library group.
 - The file is then copied into `TG_STORAGE_CHAT_FALLBACK` and recorded in a small
   JSON registry (`PENDING_STORE_PATH`).
-- The «🛟 الاحتياط» section of the main menu shows how many files are waiting and
-  how they split by type, and «🔧 إصلاح» registers every one of them and copies it
-  into its category group, deleting the held copy only after its row exists.
+- The «🛟 Reserve and pending files» screen (inside «🩺 General status») shows how
+  many files are waiting and how they split by type, and «🔧 Repair» (إصلاح)
+  registers every one of them and copies it into its category group, deleting the
+  held copy only after its row exists.
 
 Telegram's Bot API cannot read a chat's history, so the registry — not the group —
 is what makes the repair possible. Point `PENDING_STORE_PATH` at a mounted Render
@@ -130,16 +162,19 @@ because of a database hiccup.
 - `TG_SPACE_BOT_HOST` — bind address (default `0.0.0.0`).
 - `TG_SPACE_BOT_PORT` — HTTP port when `PORT` is not set (default `8000`).
 - `TG_SPACE_BOT_WEBHOOK_URL` — reserved for a future webhook mode.
+- `PREFERENCES_PATH` — where each user's language is kept (default
+  `data/user_preferences.json`). Point it at a persistent disk so the choice
+  survives a restart; a missing file simply means everybody speaks English.
 - `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
   (leave empty to allow everybody).
 - `PAGE_SIZE` — files per page in a category, and search results per page
   (default `10`, capped at `20`).
 - `TG_STORAGE_CHAT_FALLBACK` — the emergency group (for example the group named
   `TG-Storage-Chat-Fallback`): every file whose registration in Supabase fails is
-  copied here instead of the library, and «🔧 إصلاح» moves it to its real group
-  once the database answers again. It is also listed in the
-  «🔗 انضمام للمجموعات» gate, with the same one-time invite and automatic admin
-  promotion as the per-category groups.
+  copied here instead of the library, and «🔧 Repair» moves it to its real group
+  once the database answers again. It is also listed in the «🔗 Join the groups»
+  gate, with the same one-time invite and automatic admin promotion as the
+  per-category groups.
 - `PENDING_STORE_PATH` — where the list of held files is kept (default
   `data/pending_files.json`). Point it at a persistent disk so the list survives a
   restart; it holds names and ids only, never file bytes.
