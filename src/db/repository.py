@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
+from datetime import datetime
 from typing import Any, Mapping
 
 import httpx
@@ -171,6 +172,7 @@ class FileRepository:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        created_after: datetime | None = None,
         limit: int = 10,
         offset: int = 0,
         order: str = "created_at.desc",
@@ -183,6 +185,9 @@ class FileRepository:
         }
         if category is not None:
             params["category"] = f"eq.{category.value}"
+        if created_after is not None:
+            # A date window for «History uploads»: only files saved since then.
+            params["created_at"] = f"gte.{created_after.isoformat()}"
         if query:
             cleaned = _sanitize_query(query)
             if cleaned:
