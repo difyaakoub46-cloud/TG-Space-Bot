@@ -1,4 +1,4 @@
-"""Command router: start, help, cancel, stats and the shared menu callbacks."""
+"""Command router: start, help, cancel, stats, settings and the shared menu callbacks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import BTN_HELP, MenuCB
+from src.bot.keyboards import HELP_TEXTS, MenuCB
+from src.core.i18n import parse_language, pick, set_language
 from src.services.container import Services
 
 router = Router(name="commands")
@@ -35,7 +36,7 @@ async def cmd_start(
 
 
 @router.message(Command("help"))
-@router.message(F.text == BTN_HELP)
+@router.message(F.text.in_(HELP_TEXTS))
 async def cmd_help(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
@@ -78,6 +79,50 @@ async def menu_back_callback(
     await navigation.go_back(callback, state, services)
 
 
+@router.callback_query(MenuCB.filter(F.action == "settings"))
+async def menu_settings_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Open the settings screen (language, groups, help)."""
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "settings"}
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "language"))
+async def menu_language_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Open the language picker."""
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "language"}
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "set_lang"))
+async def menu_set_language_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Store the choice, switch the language and redraw the picker in it."""
+    data = MenuCB.unpack(callback.data)
+    language = parse_language(data.value)
+    if callback.from_user is not None:
+        await services.preferences.set_language(int(callback.from_user.id), language)
+    set_language(language)
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "language"},
+        notice=views.language_changed_text(language),
+        push=False,
+    )
+
+
 @router.callback_query(MenuCB.filter(F.action == "help"))
 async def menu_help_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
@@ -99,7 +144,7 @@ async def menu_cancel_callback(
         bot,
         services,
         navigation.MAIN,
-        notice="✅ تم إلغاء العملية.",
+        notice=pick("✅ The operation was cancelled.", "✅ تم إلغاء العملية."),
         push=False,
     )
 
@@ -108,6 +153,7 @@ async def menu_cancel_callback(
 async def menu_stats_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
+    """Statistics are opened from the status screen, so back returns there."""
     await views.reset_flow(state)
     await navigation.navigate_callback(
         callback, state, bot, services, {"k": "stats"}

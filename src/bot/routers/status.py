@@ -2,6 +2,7 @@
 
 The storage check that runs at startup is available here on demand, so a broken
 group can be confirmed at any time without restarting the bot or uploading a file.
+The statistics and the reserve section live under this screen.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import BTN_STATUS, MenuCB
+from src.bot.keyboards import STATUS_TEXTS, MenuCB
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ STATUS_SCREEN: dict[str, object] = {"k": "status"}
 
 
 @router.message(Command("status"))
-@router.message(F.text == BTN_STATUS)
+@router.message(F.text.in_(STATUS_TEXTS))
 async def cmd_status(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:

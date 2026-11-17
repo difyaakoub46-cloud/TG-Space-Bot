@@ -1,8 +1,8 @@
-"""The «🛟 الاحتياط» section: files held in the fallback group, and their repair.
+"""The reserve section: files held in the emergency group, and their repair.
 
 A file whose row cannot be written to Supabase never enters the library: it is
 copied into ``TG_STORAGE_CHAT_FALLBACK`` and recorded in the local registry. This
-screen shows what is waiting, and «🔧 إصلاح» registers every entry and moves it to
+screen shows what is waiting, and «Repair» registers every entry and moves it to
 its category group once the database answers again.
 """
 
@@ -16,6 +16,7 @@ from aiogram.types import CallbackQuery
 
 from src.bot import navigation, reports
 from src.bot.keyboards import MenuCB, pending_kb
+from src.core.i18n import pick
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,19 @@ router = Router(name="pending")
 
 PENDING_SCREEN: dict[str, object] = {"k": "pending"}
 
-DENIED_TEXT = "⛔ الإصلاح مقصور على المالك."
-NOT_CONFIGURED_TEXT = "⚠️ لا توجد مجموعة احتياطية مهيّأة (TG_STORAGE_CHAT_FALLBACK)."
+
+def denied_text() -> str:
+    return pick(
+        "⛔ Repairing is limited to the owner.",
+        "⛔ الإصلاح مقصور على المالك.",
+    )
+
+
+def not_configured_text() -> str:
+    return pick(
+        "⚠️ No emergency group is configured (TG_STORAGE_CHAT_FALLBACK).",
+        "⚠️ لا توجد مجموعة احتياطية مهيّأة (TG_STORAGE_CHAT_FALLBACK).",
+    )
 
 
 def _is_owner(services: Services, user_id: int | None) -> bool:
@@ -46,7 +58,7 @@ def _is_owner(services: Services, user_id: int | None) -> bool:
 async def menu_pending_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Open the emergency screen; every number is read from the registry."""
+    """Open the reserve screen; every number is read from the registry."""
     await navigation.navigate_callback(
         callback, state, bot, services, dict(PENDING_SCREEN), push=False
     )
@@ -59,10 +71,10 @@ async def repair_callback(
     """Register every held file, then move it into its category group."""
     user_id = int(callback.from_user.id) if callback.from_user else None
     if not _is_owner(services, user_id):
-        await callback.answer(DENIED_TEXT, show_alert=True)
+        await callback.answer(denied_text(), show_alert=True)
         return
     if services.settings.storage_chat_fallback is None:
-        await callback.answer(NOT_CONFIGURED_TEXT, show_alert=True)
+        await callback.answer(not_configured_text(), show_alert=True)
         return
 
     report = await services.files.repair_pending()
