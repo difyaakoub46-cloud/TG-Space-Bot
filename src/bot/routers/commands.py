@@ -7,7 +7,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from src.bot import navigation, views
+from src.bot import library_views, navigation, views
 from src.bot.keyboards import HELP_TEXTS, MenuCB
 from src.core.i18n import parse_language, pick, set_language
 from src.services.container import Services
@@ -109,7 +109,7 @@ async def menu_toggle_saved_callback(
         bot,
         services,
         {"k": "settings", "u": user_id},
-        notice=views.saved_screen_changed_text(show),
+        notice=library_views.saved_screen_changed_text(show),
         push=False,
     )
 
