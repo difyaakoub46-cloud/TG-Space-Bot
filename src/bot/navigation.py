@@ -18,10 +18,16 @@ import logging
 
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from src.bot import library_views, views
 from src.bot.keyboards import (
+    MenuCB,
     back_to_menu_kb,
     categories_kb,
     category_files_kb,
@@ -57,6 +63,30 @@ MAX_TRAIL = 20
 JOIN_FALLBACK = "fallback"
 
 MAIN: dict[str, object] = {"k": "main"}
+
+
+def _with_keep_sent_row(
+    markup: InlineKeyboardMarkup, keep: bool = False
+) -> InlineKeyboardMarkup:
+    """Add the «🗂 Keep the opened files» row under the saved-screen toggle."""
+    rows = [list(buttons) for buttons in markup.inline_keyboard]
+    row = [
+        InlineKeyboardButton(
+            text=library_views.keep_sent_label(keep),
+            callback_data=MenuCB(action="toggle_keep_sent").pack(),
+        )
+    ]
+    saved = MenuCB(action="toggle_saved").pack()
+    position = next(
+        (
+            index + 1
+            for index, buttons in enumerate(rows)
+            if any(button.callback_data == saved for button in buttons)
+        ),
+        max(0, len(rows) - 1),
+    )
+    rows.insert(position, row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _page(screen: dict[str, object]) -> int:
@@ -170,9 +200,12 @@ async def build(
     if kind == "settings":
         user_id = int(screen.get("u") or 0) or None
         show_saved = services.preferences.show_saved_screen(user_id)
+        keep_sent = services.preferences.keep_sent_files(user_id)
         return (
-            views.settings_text() + library_views.saved_screen_settings_text(show_saved),
-            settings_kb(show_saved),
+            views.settings_text()
+            + library_views.saved_screen_settings_text(show_saved)
+            + library_views.keep_sent_settings_text(keep_sent),
+            _with_keep_sent_row(settings_kb(show_saved), keep_sent),
         )
 
     if kind == "saved":
@@ -321,11 +354,52 @@ async def navigate_callback(
     await views.set_screen_cb(callback, state, text, keyboard)
 
 
+async def track_delivered(state: FSMContext, message_id: int) -> None:
+    """Remember a copy sent from a file screen, so «↩️ Back» can remove it."""
+    if not message_id:
+        return
+    data = await state.get_data()
+    ids = [int(mid) for mid in (data.get("delivered_ids") or []) if mid]
+    ids.append(int(message_id))
+    await state.update_data(delivered_ids=ids[-MAX_TRAIL * 5 :])
+
+
+async def clear_delivered(
+    bot: Bot, chat_id: int, state: FSMContext, keep: bool = False
+) -> None:
+    """Remove the copies opened from the file screens.
+
+    A file opened with «📤 Send» is an ordinary message in the chat, so «↩️ Back»
+    used to leave it behind even after returning to the library. The copies are
+    forgotten in every case; they are deleted only when the setting says so, and
+    they stay in the tracked list of the main menu either way.
+    """
+    data = await state.get_data()
+    ids = [int(mid) for mid in (data.get("delivered_ids") or []) if mid]
+    await state.update_data(delivered_ids=[])
+    if keep or not ids or not chat_id:
+        return
+    for message_id in ids:
+        await views.delete_screen_message(bot, chat_id, message_id)
+
+
 async def go_back(
     callback: CallbackQuery, state: FSMContext, services: Services
 ) -> None:
-    """Return to the previous screen, leaving every message untouched."""
+    """Return to the previous screen, removing the opened copies when asked to."""
     data = await state.get_data()
+
+    # A file opened with «📤 Send» is a normal chat message, so it must be removed
+    # here: «↩️ Back» used to leave it behind even after returning to the library.
+    user_id = int(callback.from_user.id) if callback.from_user is not None else None
+    if callback.message is not None:
+        await clear_delivered(
+            callback.bot,
+            callback.message.chat.id,
+            state,
+            keep=services.preferences.keep_sent_files(user_id),
+        )
+
     trail = [dict(entry) for entry in data.get("trail") or []]
     target = trail.pop() if trail else dict(MAIN)
     await state.update_data(trail=trail)
