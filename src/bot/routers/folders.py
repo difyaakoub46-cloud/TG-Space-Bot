@@ -19,6 +19,7 @@ from aiogram.types import CallbackQuery, Message
 from src.bot import navigation, views
 from src.bot.keyboards import FolderCB, MenuCB
 from src.bot.states import FolderStates
+from src.core.i18n import pick
 from src.db.repository import SupabaseError
 from src.services.container import Services
 from src.utils.sorting import SortSpec
@@ -106,7 +107,9 @@ async def folder_open_callback(
     data = FolderCB.unpack(callback.data)
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer("المجلد غير موجود.", show_alert=True)
+        await callback.answer(
+            pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
+        )
         return
     await views.reset_flow(state)
     await navigation.navigate_callback(
@@ -123,10 +126,14 @@ async def folder_put_callback(
     file_id = stored.get("folder_file_id")
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer("المجلد غير موجود.", show_alert=True)
+        await callback.answer(
+            pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
+        )
         return
     if not file_id:
-        await callback.answer("اختر ملفاً أولاً.", show_alert=True)
+        await callback.answer(
+            pick("Pick a file first.", "اختر ملفاً أولاً."), show_alert=True
+        )
         return
 
     await services.files.add_to_folder(folder.id, str(file_id))
@@ -139,7 +146,10 @@ async def folder_put_callback(
         bot,
         services,
         screen,
-        notice=f"✅ أُضيف الملف إلى مجلد «{folder.name}».\n\n"
+        notice=pick(
+            f"✅ The file was added to the folder «{folder.name}».\n\n",
+            f"✅ أُضيف الملف إلى مجلد «{folder.name}».\n\n",
+        )
         + views.folder_text(folder, files, sort),
     )
 
@@ -156,7 +166,13 @@ async def folder_move_callback(
 
     folder = await services.files.move_favorite(data.value, user_id, step)
     if folder is None:
-        await callback.answer("هذا المجلد ليس في المفضلة.", show_alert=True)
+        await callback.answer(
+            pick(
+                "This folder is not in the favourites.",
+                "هذا المجلد ليس في المفضلة.",
+            ),
+            show_alert=True,
+        )
         return
 
     favorites = await services.files.favorite_folders(user_id)
@@ -170,9 +186,11 @@ async def folder_move_callback(
     )
     screen, sort = await _open_folder(state, user_id, folder.id)
     files = await services.files.folder_files(folder.id, sort)
-    notice = (
+    notice = pick(
+        f"✅ «{folder.name}» is now position {position} of {len(favorites)} in "
+        "the favourite folders.",
         f"✅ صار «{folder.name}» في الموضع {position} من {len(favorites)} "
-        "في المجلدات المفضلة."
+        "في المجلدات المفضلة.",
     )
     await navigation.navigate_callback(
         callback,
@@ -197,15 +215,20 @@ async def folder_favorite_callback(
 
     folder = await services.files.set_favorite(data.value, user_id, favorite)
     if folder is None:
-        await callback.answer("المجلد غير موجود.", show_alert=True)
+        await callback.answer(
+            pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
+        )
         return
 
     screen, sort = await _open_folder(state, user_id, folder.id)
     files = await services.files.folder_files(folder.id, sort)
     notice = (
-        "⭐ أُضيف المجلد إلى المفضلة، وصار يظهر في شاشة المكتبة."
+        pick(
+            "⭐ The folder was added to the favourites and now appears on the library screen.",
+            "⭐ أُضيف المجلد إلى المفضلة، وصار يظهر في شاشة المكتبة.",
+        )
         if favorite
-        else "🌟 أُزيل المجلد من المفضلة."
+        else pick("🌟 The folder was removed from the favourites.", "🌟 أُزيل المجلد من المفضلة.")
     )
     await navigation.navigate_callback(
         callback,
@@ -226,7 +249,9 @@ async def folder_delete_callback(
     data = FolderCB.unpack(callback.data)
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer("المجلد غير موجود.", show_alert=True)
+        await callback.answer(
+            pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
+        )
         return
     await navigation.navigate_callback(
         callback,
@@ -249,7 +274,13 @@ async def folder_delete_confirm_callback(
     name = folder.name if folder is not None else ""
 
     if not await services.files.delete_folder(data.value, user_id):
-        await callback.answer("تعذّر حذف المجلد، حاول مرة أخرى.", show_alert=True)
+        await callback.answer(
+            pick(
+                "Could not delete the folder, please try again.",
+                "تعذّر حذف المجلد، حاول مرة أخرى.",
+            ),
+            show_alert=True,
+        )
         return
 
     await state.update_data(folder_file_id=None)
@@ -261,8 +292,12 @@ async def folder_delete_confirm_callback(
         services,
         _folders_key(user_id),
         notice=(
-            f"✅ حُذف المجلد «{html.escape(name, quote=False)}».\n\n"
-            "جميع الملفات التي كانت فيه باقية في المكتبة وفي مجموعات التخزين."
+            pick(
+                f"✅ The folder «{html.escape(name, quote=False)}» was deleted.\n\n"
+                "Every file it held stays in the library and in its storage group.",
+                f"✅ حُذف المجلد «{html.escape(name, quote=False)}».\n\n"
+                "جميع الملفات التي كانت فيه باقية في المكتبة وفي مجموعات التخزين.",
+            )
         ),
         push=False,
     )
@@ -292,7 +327,9 @@ async def folder_name_message(
     name = " ".join((message.text or "").split())[:_MAX_NAME]
     await views.remember(state, message.message_id)
     if not name:
-        await message.answer("⚠️ أرسل اسماً صالحاً للمجلد.")
+        await message.answer(
+            pick("⚠️ Send a valid folder name.", "⚠️ أرسل اسماً صالحاً للمجلد.")
+        )
         return
 
     user_id = int(message.from_user.id) if message.from_user else 0
@@ -303,18 +340,31 @@ async def folder_name_message(
         folder = await services.files.create_folder(user_id, name)
     except SupabaseError as exc:
         if _duplicate(exc):
-            await message.answer(f"⚠️ يوجد مجلد باسم «{name}» بالفعل.")
+            await message.answer(
+                pick(
+                    f"⚠️ A folder named «{name}» already exists.",
+                    f"⚠️ يوجد مجلد باسم «{name}» بالفعل.",
+                )
+            )
         else:
             logger.exception("Could not create folder %s", name)
-            await message.answer("⚠️ تعذّر إنشاء المجلد، حاول مرة أخرى.")
+            await message.answer(
+                pick(
+                    "⚠️ Could not create the folder, please try again.",
+                    "⚠️ تعذّر إنشاء المجلد، حاول مرة أخرى.",
+                )
+            )
         return
 
     await state.set_state(None)
-    notice = f"✅ أُنشئ مجلد «{folder.name}»."
+    notice = pick(
+        f"✅ The folder «{folder.name}» was created.",
+        f"✅ أُنشئ مجلد «{folder.name}».",
+    )
     if pending:
         await services.files.add_to_folder(folder.id, str(pending))
         await state.update_data(folder_file_id=None)
-        notice += " وأُضيف إليه الملف."
+        notice += pick(" The file was added to it.", " وأُضيف إليه الملف.")
 
     await navigation.navigate_message(
         message,

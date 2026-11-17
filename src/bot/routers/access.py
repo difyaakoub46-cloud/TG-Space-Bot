@@ -23,6 +23,7 @@ from aiogram.types import CallbackQuery, ChatMemberUpdated, ChatInviteLink
 from src.bot import navigation, views
 from src.bot.keyboards import JoinCB, MenuCB
 from src.core.config import ConfigurationError
+from src.core.i18n import pick
 from src.services.container import Services
 from src.utils.filetypes import parse_category
 
@@ -30,8 +31,18 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="access")
 
-DENIED_TEXT = "⛔ هذا الأمر مقصور على المالك."
-NOT_CONFIGURED_TEXT = "⚠️ ميزة الانضمام غير مهيّأة: أضف معرّفك في المتغير ALLOWED_USER_IDS."
+def denied_text() -> str:
+    return pick(
+        "⛔ This command is limited to the owner.",
+        "⛔ هذا الأمر مقصور على المالك.",
+    )
+
+
+def not_configured_text() -> str:
+    return pick(
+        "⚠️ Joining is not configured: add your id to ALLOWED_USER_IDS.",
+        "⚠️ ميزة الانضمام غير مهيّأة: أضف معرّفك في المتغير ALLOWED_USER_IDS.",
+    )
 # Telegram rejects an alert longer than 200 characters, which used to turn the
 # error text itself into an unhandled MESSAGE_TOO_LONG failure.
 _MAX_ALERT = 190
@@ -131,13 +142,13 @@ async def menu_join_callback(
 ) -> None:
     """Open the group picker for a listed account, silently refuse everybody else."""
     if not _allowed_ids(services):
-        await _alert(callback, NOT_CONFIGURED_TEXT)
+        await _alert(callback, not_configured_text())
         return
     if not _is_allowed(services, callback.from_user.id):
         logger.warning(
             "Ignored a join request from unlisted user %s", callback.from_user.id
         )
-        await _alert(callback, DENIED_TEXT)
+        await _alert(callback, denied_text())
         return
 
     await views.reset_flow(state)
@@ -156,29 +167,41 @@ async def join_link_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
     if not _allowed_ids(services):
-        await _alert(callback, NOT_CONFIGURED_TEXT)
+        await _alert(callback, not_configured_text())
         return
     if not _is_allowed(services, callback.from_user.id):
         logger.warning(
             "Ignored an invite request from unlisted user %s", callback.from_user.id
         )
-        await _alert(callback, DENIED_TEXT)
+        await _alert(callback, denied_text())
         return
 
     data = JoinCB.unpack(callback.data)
     if data.value == navigation.JOIN_FALLBACK:
         chat_id = services.settings.storage_chat_fallback
         if chat_id is None:
-            await _alert(callback, "⚠️ لا توجد مجموعة احتياطية مهيّأة.")
+            await _alert(
+                callback,
+                pick(
+                    "⚠️ No emergency group is configured.",
+                    "⚠️ لا توجد مجموعة احتياطية مهيّأة.",
+                ),
+            )
             return
-        label = views.FALLBACK_LABEL
+        label = views.fallback_label()
         invite_name = "owner-fallback"
     else:
         category = parse_category(data.value)
         try:
             chat_id = services.settings.storage_chat_for(category)
         except ConfigurationError:
-            await _alert(callback, "⚠️ لا توجد مجموعة تخزين مهيّأة لهذه الفئة.")
+            await _alert(
+                callback,
+                pick(
+                    "⚠️ No storage group is configured for this category.",
+                    "⚠️ لا توجد مجموعة تخزين مهيّأة لهذه الفئة.",
+                ),
+            )
             return
         label = views.category_label(category)
         invite_name = f"owner-{category.value}"[:32]
@@ -191,16 +214,24 @@ async def join_link_callback(
         logger.warning("Could not create an invite link for %s: %s", chat_id, exc)
         await _alert(
             callback,
-            f"ℹ️ هذه المجموعة صارت «مجموعة عظمى» بمعرّف {new_id}. "
-            "حدّث معرّفها في Render ثم أعد المحاولة.",
+            pick(
+                f"ℹ️ This group became a supergroup with the id {new_id}. "
+                "Update its id in Render and try again.",
+                f"ℹ️ هذه المجموعة صارت «مجموعة عظمى» بمعرّف {new_id}. "
+                "حدّث معرّفها في Render ثم أعد المحاولة.",
+            ),
         )
         return
     except TelegramAPIError as exc:
         logger.warning("Could not create an invite link for %s: %s", chat_id, exc)
         await _alert(
             callback,
-            "⚠️ تعذّر إنشاء الرابط. تأكد أن البوت مشرف في المجموعة مع صلاحية "
-            "دعوة المستخدمين، وأن المجموعة «مجموعة عظمى» لا مجموعة عادية.",
+            pick(
+                "⚠️ Could not create the link. Make sure the bot is an admin with "
+                "the invite-users right, and that the group is a supergroup.",
+                "⚠️ تعذّر إنشاء الرابط. تأكد أن البوت مشرف في المجموعة مع صلاحية "
+                "دعوة المستخدمين، وأن المجموعة «مجموعة عظمى» لا مجموعة عادية.",
+            ),
         )
         return
 
@@ -208,8 +239,13 @@ async def join_link_callback(
     notice = views.invite_text(link.invite_link, label)
     if old_id is not None:
         notice += (
-            "\n\nℹ️ المجموعة ترقّت إلى «مجموعة عظمى». حدّث معرّفها في Render إلى "
-            f"<code>{used_id}</code> لتبقى الترقية التلقائية تعمل بعد إعادة التشغيل."
+            pick(
+                "\n\nℹ️ The group was upgraded to a supergroup. Update its id in Render "
+                f"to <code>{used_id}</code> so the automatic promotion keeps working "
+                "after a restart.",
+                "\n\nℹ️ المجموعة ترقّت إلى «مجموعة عظمى». حدّث معرّفها في Render إلى "
+                f"<code>{used_id}</code> لتبقى الترقية التلقائية تعمل بعد إعادة التشغيل.",
+            )
         )
     await navigation.navigate_callback(
         callback,
@@ -254,7 +290,10 @@ async def on_chat_member(
     try:
         await bot.send_message(
             user_id,
-            f"✅ تمت ترقيتك إلى مشرف في مجموعة «{title}» تلقائياً.",
+            pick(
+                f"✅ You were promoted to admin in «{title}» automatically.",
+                f"✅ تمت ترقيتك إلى مشرف في مجموعة «{title}» تلقائياً.",
+            ),
         )
     except TelegramAPIError:
         logger.debug("Could not notify the promoted user", exc_info=True)
