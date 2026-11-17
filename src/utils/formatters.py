@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-_UNITS = ("بايت", "ك.ب", "م.ب", "غ.ب", "ت.ب")
+# Size units stay in Latin letters in both languages: only the surrounding text
+# is translated, so a size reads the same wherever it appears.
+_UNITS = ("B", "KB", "MB", "GB", "TB")
 
 
 def format_number(n: int) -> str:
@@ -27,14 +29,14 @@ def human_total(size: int | float | None) -> str:
     """Aggregate size: megabytes by default, gigabytes once it is large."""
     value = float(size or 0)
     if value <= 0:
-        return "0 م.ب"
+        return "0 MB"
     if value >= 1024**3:
-        return f"{value / 1024**3:.1f} غ.ب"
+        return f"{value / 1024**3:.1f} GB"
     if value >= 1024**2:
-        return f"{value / 1024**2:.1f} م.ب"
+        return f"{value / 1024**2:.1f} MB"
     if value >= 1024:
-        return f"{value / 1024:.1f} ك.ب"
-    return f"{int(value)} بايت"
+        return f"{value / 1024:.1f} KB"
+    return f"{int(value)} B"
 
 
 def format_datetime(value: datetime | None) -> str:
