@@ -173,8 +173,14 @@ because of a database hiccup.
   `TG-Storage-Chat-Fallback`): every file whose registration in Supabase fails is
   copied here instead of the library, and «🔧 Repair» moves it to its real group
   once the database answers again. It is also listed in the «🔗 Join the groups»
-  gate, with the same one-time invite and automatic admin promotion as the
+  gate, with the same approved join request and automatic admin promotion as the
   per-category groups.
+- `JOIN_GUARD` — `true` (default) makes storage-group invite links produce a
+  **join request** that the bot approves only for an allowed account, and removes
+  any unlisted account that gets in by another route. Set it to `false` to keep
+  plain one-use links with no approval step (not recommended).
+- `JOIN_LINK_TTL_MINUTES` — how long an invite link stays valid, in minutes
+  (default `10`, kept between `1` and `1440`).
 - `PENDING_STORE_PATH` — where the list of held files is kept (default
   `data/pending_files.json`). Point it at a persistent disk so the list survives a
   restart; it holds names and ids only, never file bytes.
@@ -183,6 +189,30 @@ because of a database hiccup.
   20 MB, so raising it has no effect; larger files are stored without a hash.
 - `LOG_LEVEL` — logging level (default `INFO`).
 - `REQUEST_TIMEOUT` — Supabase request timeout in seconds (default `30`).
+
+## Storage-group security
+
+An invite link is a bearer secret: whoever holds it can join, and membership means
+reading every file in that group. So the link alone is never the permission.
+
+- «🔗 Join the groups» still checks the caller against `ALLOWED_USER_IDS` (plus
+  `OWNER_ID`) before a link exists, but the link it creates is a **join request**
+  (`creates_join_request`), not open entry.
+- `chat_join_request` approves only an allowed id. Anybody else is declined and the
+  link they used is revoked, so a link stolen from the owner's chat is dead after
+  its first attempt. The owner is notified when `OWNER_ID` is set.
+- `chat_member` promotes an allowed account to admin, and **removes** an unlisted
+  account from a storage group (a kick: ban followed by an unban). This needs the
+  bot to be an admin with the «Ban users» right; when the kick fails, the owner gets
+  a message instead of silence.
+- Every link expires (`JOIN_LINK_TTL_MINUTES`, default ten minutes) and is revoked
+  as soon as it is used once.
+- `JOIN_GUARD=false` restores the old behaviour: a plain one-use link, no approval,
+  no removal. Use it only if the storage groups are disposable.
+
+The bot cannot undo a read that already happened, so the remaining risk is the
+account itself: protect Telegram with a passcode and two-step verification, and end
+unknown active sessions.
 
 Storage group variables use the **singular** category name —
 `TG_STORAGE_CHAT_DOCUMENT`, `TG_STORAGE_CHAT_IMAGE`, `TG_STORAGE_CHAT_VIDEO`,
