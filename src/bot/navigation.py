@@ -20,7 +20,7 @@ from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from src.bot import views
+from src.bot import library_views, views
 from src.bot.keyboards import (
     back_to_menu_kb,
     categories_kb,
@@ -170,7 +170,10 @@ async def build(
     if kind == "settings":
         user_id = int(screen.get("u") or 0) or None
         show_saved = services.preferences.show_saved_screen(user_id)
-        return views.settings_text(show_saved), settings_kb(show_saved)
+        return (
+            views.settings_text() + library_views.saved_screen_settings_text(show_saved),
+            settings_kb(show_saved),
+        )
 
     if kind == "saved":
         # A whole upload batch: one file per screen, walked with «Next ▶».
@@ -185,7 +188,7 @@ async def build(
             pending = int(screen.get("p") or 0)
             failures = int(screen.get("x") or 0)
             return (
-                views.saved_batch_text(
+                library_views.saved_batch_text(
                     records, index, duplicates, pending, failures
                 ),
                 saved_nav_kb(
@@ -206,7 +209,7 @@ async def build(
         )
         pages = max(1, -(-total // per_page))
         return (
-            views.history_text(files, total, category, span, page, pages),
+            library_views.history_text(files, total, category, span, page, pages),
             history_kb(files, category, span, page, pages),
         )
 
