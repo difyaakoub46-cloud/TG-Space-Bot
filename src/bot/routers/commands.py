@@ -74,9 +74,10 @@ async def menu_main_callback(
 async def menu_back_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    # Going back only changes the screen: nothing is deleted.
-    await views.reset_flow(state)
+    # Going back changes the screen; the copies opened from it are removed by
+    # go_back itself, which is why the flow is reset only afterwards.
     await navigation.go_back(callback, state, services)
+    await views.reset_flow(state)
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -110,6 +111,26 @@ async def menu_toggle_saved_callback(
         services,
         {"k": "settings", "u": user_id},
         notice=library_views.saved_screen_changed_text(show),
+        push=False,
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "toggle_keep_sent"))
+async def menu_toggle_keep_sent_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Keep (or not) the files opened from a file screen after «↩️ Back»."""
+    user_id = int(callback.from_user.id)
+    keep = services.preferences.keep_sent_files(user_id)
+    keep = await services.preferences.set_keep_sent_files(user_id, not keep)
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "settings", "u": user_id},
+        notice=library_views.keep_sent_changed_text(keep),
         push=False,
     )
 
