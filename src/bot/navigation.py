@@ -4,6 +4,10 @@ Every screen is described by a small, JSON-friendly ``key`` such as
 ``{"k": "category", "name": "video"}``. That lets the *back* button rebuild the
 previous screen from the database instead of keeping rendered text around, and it
 survives the FSM state being cleared between flows.
+
+The menu tree lives here as screens, not as buttons: «Settings» and «General
+status» are ordinary screens, so the back button returns to the main menu and the
+statistics / reserve screens return to the status screen they were opened from.
 """
 
 from __future__ import annotations
@@ -25,14 +29,17 @@ from src.bot.keyboards import (
     folders_kb,
     groups_kb,
     help_kb,
+    language_kb,
     main_menu_kb,
     pending_kb,
     pick_folder_kb,
     search_list_kb,
     search_prompt_kb,
+    settings_kb,
     status_kb,
 )
 from src.bot.status import status_text
+from src.core.i18n import get_language
 from src.services.container import Services
 from src.utils.filetypes import parse_category
 from src.utils.sorting import SortSpec
@@ -155,6 +162,13 @@ async def build(
             search_list_kb(items, page, pages),
         )
 
+    if kind == "settings":
+        return views.settings_text(), settings_kb()
+
+    if kind == "language":
+        language = get_language()
+        return views.language_text(language), language_kb(language)
+
     if kind == "stats":
         return views.stats_text(await services.files.stats()), back_to_menu_kb()
 
@@ -184,7 +198,7 @@ async def build(
             for category in sorted(settings.storage_chats(), key=lambda item: item.value)
         ]
         if settings.storage_chat_fallback is not None:
-            groups.append((JOIN_FALLBACK, views.FALLBACK_LABEL))
+            groups.append((JOIN_FALLBACK, views.fallback_label()))
         return views.join_groups_text(), groups_kb(groups)
 
     # The main menu (and any screen that no longer exists) shows the library total.

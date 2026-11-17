@@ -2,6 +2,7 @@
 
 The same checks that run at startup are run again here, so the owner can confirm
 at any moment that every storage group still answers before uploading anything.
+The statistics and the reserve section are opened from this screen.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from aiogram.exceptions import TelegramAPIError
 
 from src.bot import views
+from src.core.i18n import pick
 from src.db.repository import SupabaseError
 from src.services.container import Services
 from src.services.storage import StorageChatCheck
@@ -32,7 +34,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _plural(count: int, one: str, two: str, many: str) -> str:
+def _plural_ar(count: int, one: str, two: str, many: str) -> str:
     if count == 1:
         return one
     if count == 2:
@@ -47,18 +49,33 @@ def _uptime(seconds: float) -> str:
     days, rest = divmod(seconds, 86_400)
     hours, rest = divmod(rest, 3_600)
     minutes, _ = divmod(rest, 60)
-    parts = []
+    parts: list[str] = []
     if days:
-        parts.append(_plural(days, "يوم", "يومان", "أيام"))
+        parts.append(
+            pick(
+                f"{days} day{'s' if days != 1 else ''}",
+                _plural_ar(days, "يوم", "يومان", "أيام"),
+            )
+        )
     if hours:
-        parts.append(_plural(hours, "ساعة", "ساعتان", "ساعات"))
-    parts.append(_plural(minutes, "دقيقة", "دقيقتان", "دقائق"))
-    return " و".join(parts)
+        parts.append(
+            pick(
+                f"{hours} hour{'s' if hours != 1 else ''}",
+                _plural_ar(hours, "ساعة", "ساعتان", "ساعات"),
+            )
+        )
+    parts.append(
+        pick(
+            f"{minutes} minute{'s' if minutes != 1 else ''}",
+            _plural_ar(minutes, "دقيقة", "دقيقتان", "دقائق"),
+        )
+    )
+    return pick(" and ".join(parts), " و".join(parts))
 
 
 def _check_labels(check: StorageChatCheck) -> str:
     if check.is_fallback:
-        return views.FALLBACK_LABEL
+        return views.fallback_label()
     if not check.categories:
         return "—"
     return "، ".join(
@@ -69,12 +86,12 @@ def _check_labels(check: StorageChatCheck) -> str:
 
 async def _bot_identity(bot) -> str:
     if bot is None:
-        return "غير متاح"
+        return pick("unavailable", "غير متاح")
     try:
         me = await bot.get_me()
     except TelegramAPIError:
         logger.warning("Could not read the bot identity", exc_info=True)
-        return "تعذّر الاتصال بتيليغرام"
+        return pick("could not reach Telegram", "تعذّر الاتصال بتيليغرام")
     handle = f"@{me.username}" if me.username else me.full_name
     return f"{_escape(handle)} · <code>{me.id}</code>"
 
@@ -110,24 +127,43 @@ async def status_text(
     categories = stats.get("categories") or {}
 
     lines = [
-        "🩺 <b>الحالة العامة</b>",
-        f"آخر تحديث: {_now()}",
+        pick("🩺 <b>General status</b>", "🩺 <b>الحالة العامة</b>"),
+        pick(f"Last update: {_now()}", f"آخر تحديث: {_now()}"),
         "",
-        "🤖 <b>البوت</b>",
-        f"الحساب: {await _bot_identity(services.bot)}",
-        "وضع التشغيل: Long polling (استقبال مباشر)",
-        f"مدة التشغيل: {_uptime(services.uptime_seconds())}",
-        f"المالك: <code>{settings.owner_id or 'غير محدد'}</code>",
-        f"المستخدمون المسموحون: {format_number(len(allowed)) if allowed else 'الجميع'}",
+        pick("🤖 <b>Bot</b>", "🤖 <b>البوت</b>"),
+        pick(f"Account: {await _bot_identity(services.bot)}", f"الحساب: {await _bot_identity(services.bot)}"),
+        pick("Mode: long polling", "وضع التشغيل: Long polling (استقبال مباشر)"),
+        pick(f"Uptime: {_uptime(services.uptime_seconds())}", f"مدة التشغيل: {_uptime(services.uptime_seconds())}"),
+        pick(
+            f"Owner: <code>{settings.owner_id or 'not set'}</code>",
+            f"المالك: <code>{settings.owner_id or 'غير محدد'}</code>",
+        ),
+        pick(
+            f"Allowed users: {format_number(len(allowed)) if allowed else 'everybody'}",
+            f"المستخدمون المسموحون: {format_number(len(allowed)) if allowed else 'الجميع'}",
+        ),
         "",
-        "🗄 <b>قاعدة البيانات</b> (Supabase)",
-        f"الجدول: <code>{_escape(settings.supabase_table)}</code> · "
-        f"زمن الاستجابة: {latency_ms:.0f} م.ث",
-        f"الملفات: <b>{format_number(int(stats.get('total', 0)))}</b> · "
-        f"الحجم: <b>{_escape(human_total(int(stats.get('total_bytes', 0) or 0)))}</b>",
+        pick("🗄 <b>Database</b> (Supabase)", "🗄 <b>قاعدة البيانات</b> (Supabase)"),
+        pick(
+            f"Table: <code>{_escape(settings.supabase_table)}</code> · "
+            f"Latency: {latency_ms:.0f} ms",
+            f"الجدول: <code>{_escape(settings.supabase_table)}</code> · "
+            f"زمن الاستجابة: {latency_ms:.0f} م.ث",
+        ),
+        pick(
+            f"Files: <b>{format_number(int(stats.get('total', 0)))}</b> · "
+            f"Size: <b>{_escape(human_total(int(stats.get('total_bytes', 0) or 0)))}</b>",
+            f"الملفات: <b>{format_number(int(stats.get('total', 0)))}</b> · "
+            f"الحجم: <b>{_escape(human_total(int(stats.get('total_bytes', 0) or 0)))}</b>",
+        ),
     ]
     if database_error:
-        lines.append(f"⛔ تعذّر قراءة الإحصائيات: {_escape(database_error[:160])}")
+        lines.append(
+            pick(
+                f"⛔ Could not read the statistics: {_escape(database_error[:160])}",
+                f"⛔ تعذّر قراءة الإحصائيات: {_escape(database_error[:160])}",
+            )
+        )
     for category in views.CATEGORY_ORDER:
         count = int(categories.get(category, 0) or 0)
         lines.append(f"{views.category_label(category)}: {format_number(count)}")
@@ -135,35 +171,65 @@ async def status_text(
     lines.extend(
         [
             "",
-            "🗃 <b>مجموعات التخزين</b>",
-            f"مهيّأة: {format_number(len(configured))} من "
-            f"{format_number(len(FileCategory))} فئة · "
-            + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 غير مهيّأة"),
-            f"الوصول الآن: ✅ {format_number(len(reachable))} · "
-            f"⛔ {format_number(len(broken))}",
-            f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
+            pick("🗃 <b>Storage groups</b>", "🗃 <b>مجموعات التخزين</b>"),
+            pick(
+                f"Configured: {format_number(len(configured))} of "
+                f"{format_number(len(FileCategory))} categories · "
+                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 not configured"),
+                f"مهيّأة: {format_number(len(configured))} من "
+                f"{format_number(len(FileCategory))} فئة · "
+                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 غير مهيّأة"),
+            ),
+            pick(
+                f"Reachable now: ✅ {format_number(len(reachable))} · "
+                f"⛔ {format_number(len(broken))}",
+                f"الوصول الآن: ✅ {format_number(len(reachable))} · "
+                f"⛔ {format_number(len(broken))}",
+            ),
+            pick(
+                f"🛟 Reserve: {format_number(services.pending.total)} pending file(s)",
+                f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
+            ),
         ]
     )
     if not checks:
-        lines.append("⚠️ لم تُهيّأ أي مجموعة تخزين بعد.")
+        lines.append(
+            pick(
+                "⚠️ No storage group is configured yet.",
+                "⚠️ لم تُهيّأ أي مجموعة تخزين بعد.",
+            )
+        )
     for check in checks:
         mark = "✅" if check.reachable else "⛔"
         lines.append(f"{mark} {_check_labels(check)} — <code>{check.chat_id}</code>")
         if not check.reachable and check.reason:
-            lines.append(f"   السبب: {_escape(check.reason[:160])}")
+            lines.append(
+                pick(
+                    f"   Reason: {_escape(check.reason[:160])}",
+                    f"   السبب: {_escape(check.reason[:160])}",
+                )
+            )
 
     if broken:
         lines.extend(
             [
                 "",
-                "⚠️ أضف البوت مشرفاً في المجموعات المعلّمة بـ⛔ أو صحّح "
-                "معرّفها في Render.",
+                pick(
+                    "⚠️ Add the bot as an admin in the groups marked ⛔, or fix their "
+                    "ids in Render.",
+                    "⚠️ أضف البوت مشرفاً في المجموعات المعلّمة بـ⛔ أو صحّح "
+                    "معرّفها في Render.",
+                ),
             ]
         )
     uncovered = settings.uncovered_categories()
     if uncovered:
         lines.append(
-            "⚠️ فئات بلا مجموعة تخزين (الاحتياط لا يغطيها، ورفعها سيُرفض): "
+            pick(
+                "⚠️ Categories without a storage group (the reserve does not cover "
+                "them; their uploads are refused): ",
+                "⚠️ فئات بلا مجموعة تخزين (الاحتياط لا يغطيها، ورفعها سيُرفض): ",
+            )
             + "، ".join(views.category_label(category) for category in uncovered)
         )
     return "\n".join(lines)
