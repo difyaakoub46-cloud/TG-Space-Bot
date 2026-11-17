@@ -10,6 +10,7 @@ from src.core.config import Settings
 from src.db.repository import FileRepository
 from src.services.files import FileStorageServices
 from src.services.pending import PendingStore
+from src.services.preferences import UserPreferences
 from src.services.storage import StorageService
 
 
@@ -23,6 +24,9 @@ class Services:
         # counted in the status screen) before the first upload.
         self.pending = PendingStore(settings.pending_store_path)
         self.pending.load()
+        # Each user's interface language (English until they change it).
+        self.preferences = UserPreferences(settings.preferences_path)
+        self.preferences.load()
         self.files = FileStorageServices(
             settings, self.repository, pending=self.pending
         )

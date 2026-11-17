@@ -146,6 +146,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PENDING_STORE_PATH", "PENDING_PATH"),
     )
 
+    # Where each user's language is remembered. English is the default, so the
+    # file may be missing, empty or unreadable without breaking anything.
+    preferences_path: str = Field(
+        "data/user_preferences.json",
+        validation_alias=AliasChoices("PREFERENCES_PATH", "USER_PREFERENCES_PATH"),
+    )
+
     server_host: str = Field(
         "0.0.0.0", validation_alias=AliasChoices("TG_SPACE_BOT_HOST", "HOST")
     )
