@@ -73,6 +73,59 @@ def saved_screen_changed_text(show: bool) -> str:
     )
 
 
+def keep_sent_label(keep: bool = False) -> str:
+    """The «keep the opened files» toggle, with its current state on the button."""
+    state = pick("✅ On", "✅ مفعّل") if keep else pick("⛔ Off", "⛔ معطّل")
+    return pick(
+        f"🗂 Keep the opened files: {state}",
+        f"🗂 الإبقاء على الملفات المفتوحة: {state}",
+    )
+
+
+def keep_sent_settings_text(keep: bool = False) -> str:
+    """The settings block of the «keep the opened files» toggle."""
+    state = pick("✅ On", "✅ مفعّل") if keep else pick("⛔ Off", "⛔ معطّل")
+    return "\n".join(
+        [
+            "",
+            pick(
+                f"🗂 Keep the opened files: <b>{state}</b>",
+                f"🗂 الإبقاء على الملفات المفتوحة: <b>{state}</b>",
+            ),
+            pick(
+                "When it is on, a file you open with «📤 Send» stays in the chat even "
+                "after «↩️ Back», through the library, until the main menu removes "
+                "everything.",
+                "عند التفعيل يبقى الملف الذي تفتحه بزر «📤 إرسال» في المحادثة حتى بعد "
+                "«↩️ الرجوع»، عبر المكتبة، إلى أن يمسح زر «القائمة الرئيسية» كل شيء.",
+            ),
+            pick(
+                "When it is off, pressing «↩️ Back» on a file removes its preview "
+                "from the chat immediately; the main menu still clears everything.",
+                "عند التعطيل يمسح زر «↩️ الرجوع» معاينة الملف من المحادثة فوراً، ويبقى "
+                "زر «القائمة الرئيسية» يمسح كل شيء.",
+            ),
+        ]
+    )
+
+
+def keep_sent_changed_text(keep: bool) -> str:
+    """The confirmation after flipping the «keep the opened files» setting."""
+    if keep:
+        return pick(
+            "✅ Opened files are kept: they stay in the chat after «↩️ Back» until "
+            "the main menu clears the chat.",
+            "✅ الملفات المفتوحة تُبقى: تبقى في المحادثة بعد «↩️ الرجوع» إلى أن "
+            "تمسحها القائمة الرئيسية.",
+        )
+    return pick(
+        "⛔ Opened files are removed on «↩️ Back»: the preview leaves the chat as "
+        "soon as you go back. The main menu still clears everything.",
+        "⛔ الملفات المفتوحة تُمسح بزر «↩️ الرجوع»: تختفي المعاينة من المحادثة "
+        "بمجرد الرجوع، ويبقى زر القائمة الرئيسية يمسح كل شيء.",
+    )
+
+
 def saved_batch_text(
     records: Sequence[StoredFile],
     index: int = 0,
