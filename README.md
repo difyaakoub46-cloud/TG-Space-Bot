@@ -18,6 +18,21 @@ Telegram bot that saves incoming files into the right Telegram storage group (do
    group chat id in `TG_STORAGE_CHAT_<CATEGORY>`.
 5. Start the bot: `python main.py`.
 
+## Checks
+
+```bash
+pip install -r requirements-dev.txt
+python -m scripts.verify_schema   # rebuilds the schema on a throwaway database
+python -m pytest -q               # emergency hold and repair, plus the registry
+```
+
+`scripts.verify_schema` applies every migration to a brand-new database, then
+checks the objects, the identity columns, that every foreign key column has the
+type of the column it references, and runs an insert/update/delete flow through
+the triggers and views. It never touches the configured database: it creates a
+temporary one on `VERIFY_DATABASE_URL`, or on a private PostgreSQL started by
+`pgserver` when that variable is unset.
+
 ## Architecture
 
 - `src/core/` — settings and logging.
