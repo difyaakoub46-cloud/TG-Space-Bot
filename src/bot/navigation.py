@@ -40,7 +40,7 @@ from src.bot.keyboards import (
     settings_kb,
     status_kb,
 )
-from src.bot.status import group_permissions_text, status_text
+from src.bot.status import group_permissions_text, statistics_text, status_text
 from src.core.i18n import get_language
 from src.services.container import Services
 from src.utils.filetypes import parse_category
@@ -172,7 +172,7 @@ async def build(
         return views.language_text(language), language_kb(language)
 
     if kind == "stats":
-        return views.stats_text(await services.files.stats()), back_to_menu_kb()
+        return await statistics_text(services), back_to_menu_kb()
 
     if kind == "status":
         return await status_text(services), status_kb()
