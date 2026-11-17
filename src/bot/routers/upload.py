@@ -12,6 +12,7 @@ from aiogram.types import Message
 
 from src.bot import navigation, views
 from src.bot.keyboards import main_menu_kb
+from src.core.i18n import pick
 from src.services.container import Services
 from src.services.files import DuplicateFileError, QuarantinedFileError
 from src.utils.filetypes import extract_candidate
@@ -25,9 +26,12 @@ SUPPORTED_MEDIA = (
     F.document | F.photo | F.video | F.audio | F.voice | F.animation | F.video_note
 )
 
-FAILED_TEXT = (
-    "❌ فشل حفظ الملف. تأكد من إعدادات مجموعات التخزين وصلاحيات البوت."
-)
+def failed_text() -> str:
+    """The failure line is built per update, so it follows the user's language."""
+    return pick(
+        "❌ Could not save the file. Check the storage-group settings and the bot's rights.",
+        "❌ فشل حفظ الملف. تأكد من إعدادات مجموعات التخزين وصلاحيات البوت.",
+    )
 
 
 def _reason(exc: BaseException) -> str:
@@ -48,7 +52,12 @@ async def handle_upload(
     # Track the incoming file too, so a copy that survives any failure is removed
     # the next time the main menu is opened.
     await views.remember(state, message.message_id)
-    status = await message.answer("⏳ جارٍ نقل الملف إلى مجموعة التخزين…")
+    status = await message.answer(
+        pick(
+            "⏳ Moving the file into its storage group…",
+            "⏳ جارٍ نقل الملف إلى مجموعة التخزين…",
+        )
+    )
 
     try:
         record = await services.files.save_from_message(message, candidate)
@@ -89,7 +98,7 @@ async def handle_upload(
             bot,
             status.chat.id,
             status.message_id,
-            f"{FAILED_TEXT}\n\n<code>{_reason(exc)}</code>",
+            f"{failed_text()}\n\n<code>{_reason(exc)}</code>",
             reply_markup=main_menu_kb(),
         )
         return

@@ -15,6 +15,7 @@ from aiogram.types import CallbackQuery
 
 from src.bot import navigation, views
 from src.bot.keyboards import SortCB, sort_menu_kb
+from src.core.i18n import pick
 from src.services.container import Services
 from src.utils.sorting import SortSpec
 
@@ -39,7 +40,13 @@ async def sort_menu_callback(
     """Open the panel on top of the current list, without losing its place."""
     screen = await _current_screen(state)
     if screen is None:
-        await callback.answer("لا يمكن الفرز في هذه الشاشة.", show_alert=True)
+        await callback.answer(
+            pick(
+                "Sorting is not available on this screen.",
+                "لا يمكن الفرز في هذه الشاشة.",
+            ),
+            show_alert=True,
+        )
         return
 
     sort = SortSpec.from_screen(screen)
@@ -63,7 +70,13 @@ async def sort_set_callback(
     data = SortCB.unpack(callback.data)
     screen = await _current_screen(state)
     if screen is None:
-        await callback.answer("لا يمكن الفرز في هذه الشاشة.", show_alert=True)
+        await callback.answer(
+            pick(
+                "Sorting is not available on this screen.",
+                "لا يمكن الفرز في هذه الشاشة.",
+            ),
+            show_alert=True,
+        )
         return
 
     screen.update(SortSpec.parse(data.field, data.direction).to_screen())

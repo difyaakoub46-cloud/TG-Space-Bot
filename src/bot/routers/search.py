@@ -8,15 +8,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import BTN_SEARCH, MenuCB, SearchCB
+from src.bot.keyboards import SEARCH_TEXTS, MenuCB, SearchCB
 from src.bot.states import SearchStates
+from src.core.i18n import pick
 from src.services.container import Services
 
 router = Router(name="search")
 
 
 @router.message(Command("search"))
-@router.message(F.text == BTN_SEARCH)
+@router.message(F.text.in_(SEARCH_TEXTS))
 async def cmd_search(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
@@ -45,7 +46,12 @@ async def search_query_message(
 ) -> None:
     query = (message.text or "").strip()
     if not query:
-        await message.answer("⚠️ أدخل اسم الملف الذي تبحث عنه.")
+        await message.answer(
+            pick(
+                "⚠️ Type the name of the file you are looking for.",
+                "⚠️ أدخل اسم الملف الذي تبحث عنه.",
+            )
+        )
         return
 
     await state.set_state(None)

@@ -13,13 +13,14 @@ from aiogram.types import CallbackQuery, Message
 
 from src.bot import navigation, views
 from src.bot.keyboards import (
-    BTN_LIBRARY,
+    LIBRARY_TEXTS,
     CategoryCB,
     FileCB,
     MenuCB,
     delete_confirm_kb,
 )
 from src.bot.states import RenameStates
+from src.core.i18n import pick
 from src.services.container import Services
 from src.utils.filetypes import parse_category
 
@@ -29,7 +30,7 @@ router = Router(name="browse")
 
 
 @router.message(Command("library"))
-@router.message(F.text == BTN_LIBRARY)
+@router.message(F.text.in_(LIBRARY_TEXTS))
 async def cmd_library(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
@@ -86,7 +87,7 @@ async def file_view_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer("الملف غير موجود.", show_alert=True)
+        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await navigation.navigate_callback(
         callback, state, bot, services, {"k": "file", "id": record.id}
@@ -100,7 +101,7 @@ async def file_send_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer("الملف غير موجود.", show_alert=True)
+        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
 
     try:
@@ -110,7 +111,11 @@ async def file_send_callback(
     except TelegramAPIError as exc:
         logger.warning("Could not deliver %s: %s", record.id, exc)
         await callback.answer(
-            "تعذّر إرسال الملف، ربما حُذف من مجموعة التخزين.", show_alert=True
+            pick(
+                "Could not send the file; it may have been deleted from its storage group.",
+                "تعذّر إرسال الملف، ربما حُذف من مجموعة التخزين.",
+            ),
+            show_alert=True,
         )
         return
 
@@ -135,7 +140,7 @@ async def file_rename_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer("الملف غير موجود.", show_alert=True)
+        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await state.set_state(RenameStates.waiting_name)
     await state.update_data(rename_file_id=record.id)
@@ -157,7 +162,12 @@ async def rename_message(
     name = " ".join((message.text or "").split())
     await views.remember(state, message.message_id)
     if not name or len(name) > 120:
-        await message.answer("⚠️ أرسل اسماً بين حرف واحد و١٢٠ حرفاً.")
+        await message.answer(
+            pick(
+                "⚠️ Send a name between 1 and 120 characters.",
+                "⚠️ أرسل اسماً بين حرف واحد و١٢٠ حرفاً.",
+            )
+        )
         return
 
     stored = await state.get_data()
@@ -165,7 +175,12 @@ async def rename_message(
     await state.set_state(None)
     updated = await services.files.rename(file_id, name) if file_id else None
     if updated is None:
-        await message.answer("⚠️ تعذّر تحديث الاسم، حاول مرة أخرى.")
+        await message.answer(
+            pick(
+                "⚠️ Could not update the name, please try again.",
+                "⚠️ تعذّر تحديث الاسم، حاول مرة أخرى.",
+            )
+        )
         return
 
     await navigation.navigate_message(
@@ -174,7 +189,10 @@ async def rename_message(
         bot,
         services,
         {"k": "file", "id": updated.id},
-        notice=f"✅ تم تغيير الاسم إلى «{html.escape(updated.file_name, quote=False)}».",
+        notice=pick(
+            f"✅ The name was changed to «{html.escape(updated.file_name, quote=False)}».",
+            f"✅ تم تغيير الاسم إلى «{html.escape(updated.file_name, quote=False)}».",
+        ),
     )
 
 
@@ -185,7 +203,7 @@ async def file_folder_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer("الملف غير موجود.", show_alert=True)
+        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await state.update_data(folder_file_id=record.id)
     await navigation.navigate_callback(
@@ -208,7 +226,7 @@ async def file_delete_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer("الملف غير موجود.", show_alert=True)
+        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await navigation.navigate_callback(
         callback,
@@ -229,7 +247,9 @@ async def file_delete_confirm_callback(
     data = FileCB.unpack(callback.data)
     deleted = await services.files.delete(data.file_id)
     if not deleted:
-        await callback.answer("تعذّر حذف الملف.", show_alert=True)
+        await callback.answer(
+            pick("Could not delete the file.", "تعذّر حذف الملف."), show_alert=True
+        )
         return
     await navigation.navigate_callback(
         callback,
@@ -237,6 +257,9 @@ async def file_delete_confirm_callback(
         bot,
         services,
         {"k": "categories", "u": int(callback.from_user.id)},
-        notice="✅ تم حذف الملف من المكتبة.",
+        notice=pick(
+            "✅ The file was removed from the library.",
+            "✅ تم حذف الملف من المكتبة.",
+        ),
         push=False,
     )
