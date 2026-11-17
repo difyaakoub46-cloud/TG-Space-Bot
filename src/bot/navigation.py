@@ -7,7 +7,8 @@ survives the FSM state being cleared between flows.
 
 The menu tree lives here as screens, not as buttons: «Settings» and «General
 status» are ordinary screens, so the back button returns to the main menu and the
-statistics / reserve screens return to the status screen they were opened from.
+statistics / permissions / reserve screens return to the status screen they were
+opened from.
 """
 
 from __future__ import annotations
@@ -32,13 +33,14 @@ from src.bot.keyboards import (
     language_kb,
     main_menu_kb,
     pending_kb,
+    permissions_kb,
     pick_folder_kb,
     search_list_kb,
     search_prompt_kb,
     settings_kb,
     status_kb,
 )
-from src.bot.status import status_text
+from src.bot.status import group_permissions_text, status_text
 from src.core.i18n import get_language
 from src.services.container import Services
 from src.utils.filetypes import parse_category
@@ -174,6 +176,9 @@ async def build(
 
     if kind == "status":
         return await status_text(services), status_kb()
+
+    if kind == "permissions":
+        return await group_permissions_text(services), permissions_kb()
 
     if kind == "pending":
         store = services.pending

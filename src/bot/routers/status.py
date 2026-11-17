@@ -2,7 +2,8 @@
 
 The storage check that runs at startup is available here on demand, so a broken
 group can be confirmed at any time without restarting the bot or uploading a file.
-The statistics and the reserve section live under this screen.
+The statistics, the group permissions and the reserve section live under this
+screen.
 """
 
 from __future__ import annotations
@@ -54,4 +55,24 @@ async def status_refresh_callback(
     """Reach the storage groups again and refresh every number in place."""
     await navigation.navigate_callback(
         callback, state, bot, services, dict(STATUS_SCREEN), push=False
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "permissions"))
+async def permissions_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Open «🛡 Group permissions»; «Back» returns to the status screen."""
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "permissions"}
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "permissions_check"))
+async def permissions_refresh_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Read the administrator rights of every group again, in place."""
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "permissions"}, push=False
     )
