@@ -110,6 +110,17 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OWNER_ID", "OWNER_TELEGRAM_ID", "TG_OWNER_ID"),
     )
 
+    # Guard for the storage groups: invite links become join requests that the bot
+    # approves only for the allowed ids, and anybody else who gets in is removed.
+    join_guard: bool = Field(
+        True, validation_alias=AliasChoices("JOIN_GUARD", "JOIN_APPROVAL")
+    )
+    # How long an invite link stays valid. Keep it short: the link itself is the
+    # secret, so a leaked link must die quickly on its own.
+    join_link_ttl_minutes: int = Field(
+        10, validation_alias=AliasChoices("JOIN_LINK_TTL_MINUTES", "JOIN_LINK_TTL")
+    )
+
     request_timeout: float = 30.0
     # Files larger than this are saved without a content fingerprint (Telegram
     # does not let a bot download more than 20 MB anyway).
@@ -138,6 +149,18 @@ class Settings(BaseSettings):
 
     def results_per_page(self) -> int:
         return max(1, min(self.page_size, MAX_PAGE_SIZE))
+
+    def join_guard_enabled(self) -> bool:
+        """Whether invite links require the bot's approval and strangers are removed."""
+        return bool(self.join_guard)
+
+    def join_link_ttl(self) -> int:
+        """Invite-link lifetime in seconds, kept between one minute and one day."""
+        try:
+            minutes = int(self.join_link_ttl_minutes)
+        except (TypeError, ValueError):
+            minutes = 10
+        return max(1, min(minutes, 1440)) * 60
 
     # Where the emergency registry lives. Point it at a persistent disk so the
     # list of held files survives a restart.
