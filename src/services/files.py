@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any
 
@@ -23,6 +24,16 @@ from src.utils.sorting import SortSpec, database_order, sort_files
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
+
+# The windows of «History uploads»: a span of days, or the whole archive.
+HISTORY_DAYS: dict[str, int] = {"day": 1, "week": 7, "month": 30, "year": 365}
+HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
+
+
+def history_span(value: object) -> str:
+    """A requested history window, defaulting to the whole archive."""
+    span = str(value or "").strip().lower()
+    return span if span in HISTORY_SPANS else "all"
 
 
 def _is_duplicate(exc: SupabaseError) -> bool:
@@ -364,6 +375,43 @@ class FileStorageServices:
         if not files and page > last_page:
             # The library shrank (or the page came from an older screen): show the
             # last page that still has files instead of an empty list.
+            page = last_page
+            files, total = await fetch(page)
+        return files, total, page
+
+    async def history_page(
+        self,
+        category: FileCategory | str | None = None,
+        span: str = "all",
+        *,
+        page: int = 1,
+        per_page: int = 10,
+    ) -> tuple[list[StoredFile], int, int]:
+        """One page of «History uploads»: newest first, optionally narrowed.
+
+        The archive spans the whole library, so the caller picks a category (or
+        none for every file) and a window of days; the newest file is always the
+        first row. Both the window and the slice run in the database so the last
+        page is reachable and the counters stay correct.
+        """
+        parsed = parse_category(category) if category not in (None, "") else None
+        days = HISTORY_DAYS.get(history_span(span))
+        since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+        per_page = max(1, per_page)
+        page = max(1, page)
+
+        async def fetch(target: int) -> tuple[list[StoredFile], int]:
+            return await self._repository.search(
+                category=parsed,
+                created_after=since,
+                limit=per_page,
+                offset=(target - 1) * per_page,
+                order="created_at.desc",
+            )
+
+        files, total = await fetch(page)
+        last_page = max(1, -(-total // per_page))
+        if not files and page > last_page:
             page = last_page
             files, total = await fetch(page)
         return files, total, page
