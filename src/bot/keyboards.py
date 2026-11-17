@@ -25,7 +25,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot import views
+from src.bot import library_views, views
 from src.core.i18n import Language, pick
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
@@ -499,12 +499,16 @@ def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
         (SortField.name, SortDirection.asc, pick("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z")),
         (SortField.name, SortDirection.desc, pick("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A")),
     )
-    for field, direction, label in options:
-        active = sort.field is field and sort.direction is direction
+    for direction_field, direction_value, label in (
+        (item[0], item[1], item[2]) for item in options
+    ):
+        active = sort.field is direction_field and sort.direction is direction_value
         builder.button(
             text=f"{'✅ ' if active else ''}{label}",
             callback_data=SortCB(
-                action="set", field=field.value, direction=direction.value
+                action="set",
+                field=direction_field.value,
+                direction=direction_value.value,
             ).pack(),
         )
     builder.adjust(2)
@@ -867,10 +871,10 @@ def history_kb(
     current = str(span or "all")
     span_buttons = [
         InlineKeyboardButton(
-            text=f"{'✅ ' if value == current else ''}{views.history_span_label(value)}",
+            text=f"{'✅ ' if value == current else ''}{library_views.history_span_label(value)}",
             callback_data=HistoryCB(action="span", value=value).pack(),
         )
-        for value in views.HISTORY_SPANS
+        for value in library_views.HISTORY_SPANS
     ]
     for start in range(0, len(span_buttons), 2):
         builder.row(*span_buttons[start : start + 2])
