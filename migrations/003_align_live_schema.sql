@@ -2,9 +2,10 @@
 -- TG Space Bot :: align an existing live database with migrations 001 + 002
 -- =============================================================================
 -- The live project created public.files by hand: ``id`` is an integer sequence
--- instead of the uuid used in 001, and none of the triggers, constraints or
--- indexes from 001/002 existed there. This migration is idempotent and safe to
--- run on the live database *and* on one created from 001 + 002.
+-- instead of the uuid 001 used at the time (001 now creates a bigint identity,
+-- matching this live schema), and none of the triggers, constraints or indexes
+-- from 001/002 existed there. This migration is idempotent and safe to run on the
+-- live database *and* on one created from 001 + 002.
 --
 -- Applied to the live project on 2026-11-15. Verified afterwards:
 --   * both triggers present and enabled,

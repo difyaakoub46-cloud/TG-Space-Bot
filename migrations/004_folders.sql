@@ -17,9 +17,12 @@ create table if not exists public.folders (
 create unique index if not exists folders_user_name_key
     on public.folders (user_id, lower(name));
 
+-- file_id is a bigint to match files.id (a bigint identity since 001 was
+-- aligned with the live schema); folder_id is a bigint identity as well. Both
+-- columns must have the same type as the keys they reference.
 create table if not exists public.folder_files (
     folder_id   bigint      not null references public.folders(id) on delete cascade,
-    file_id     integer     not null references public.files(id)  on delete cascade,
+    file_id     bigint      not null references public.files(id)  on delete cascade,
     created_at  timestamptz not null default timezone('utc', now()),
     primary key (folder_id, file_id)
 );
