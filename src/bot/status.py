@@ -3,6 +3,10 @@
 The same checks that run at startup are run again here, so the owner can confirm
 at any moment that every storage group still answers before uploading anything.
 The statistics and the reserve section are opened from this screen.
+
+Administrator rights have two levels of detail on purpose: one summary line in the
+overview (are they all enabled, some, or none), and a separate
+«🛡 Group permissions» section that names every missing right per group.
 """
 
 from __future__ import annotations
@@ -19,15 +23,15 @@ from src.bot import views
 from src.core.i18n import pick
 from src.db.repository import SupabaseError
 from src.services.container import Services
-from src.services.storage import (
-    REQUIRED_RIGHTS,
-    RIGHT_CONSEQUENCES,
-    StorageChatCheck,
-)
+from src.services.storage import REQUIRED_RIGHTS, StorageChatCheck
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 
 logger = logging.getLogger(__name__)
+
+_RIGHT_LABELS: dict[str, tuple[str, str]] = {
+    name: (english, arabic) for name, english, arabic in REQUIRED_RIGHTS
+}
 
 
 def _escape(value: object) -> str:
@@ -77,44 +81,18 @@ def _uptime(seconds: float) -> str:
     return pick(" and ".join(parts), " و".join(parts))
 
 
-_RIGHT_LABELS: dict[str, tuple[str, str]] = {
-    name: (english, arabic) for name, english, arabic in REQUIRED_RIGHTS
-}
-
-
-def _rights_list(missing: Sequence[str]) -> str:
-    """The missing rights, named the way Telegram's own screen names them."""
+def right_labels(missing: Sequence[str]) -> str:
+    """Missing rights, named the way Telegram's own screen names them."""
     return " · ".join(
         pick(*_RIGHT_LABELS[name]) for name in missing if name in _RIGHT_LABELS
     )
 
 
-def _rights_lines(check: StorageChatCheck) -> list[str]:
-    """One line per group: is the bot an admin, and which right is missing."""
-    if check.is_admin is None:
-        return []
-    if not check.is_admin:
-        return [
-            pick(
-                "   🛡 Admin: ⛔ the bot is not an administrator here — joining is "
-                "unguarded and the promotion cannot work",
-                "   🛡 الإشراف: ⛔ البوت ليس مشرفاً هنا — الدخول بلا حماية والترقية "
-                "لا تعمل",
-            )
-        ]
-    if not check.missing_rights:
-        return [
-            pick(
-                "   🛡 Admin: ✅ admin with every required right",
-                "   🛡 الإشراف: ✅ مشرف مع كل الحقوق المطلوبة",
-            )
-        ]
-    return [
-        pick(
-            f"   🛡 Admin: ⚠️ missing {_rights_list(check.missing_rights)}",
-            f"   🛡 الإشراف: ⚠️ ناقص: {_rights_list(check.missing_rights)}",
-        )
-    ]
+def _state(check: StorageChatCheck) -> str:
+    """``ok``, ``partial`` or ``none`` — the only thing the overview needs."""
+    if check.is_admin is False:
+        return "none"
+    return "partial" if check.missing_rights else "ok"
 
 
 def _check_labels(check: StorageChatCheck) -> str:
@@ -126,6 +104,125 @@ def _check_labels(check: StorageChatCheck) -> str:
         views.category_label(category)
         for category in sorted(check.categories, key=lambda item: item.value)
     )
+
+
+def _permissions_summary(checks: Sequence[StorageChatCheck]) -> str:
+    readable = [check for check in checks if check.reachable]
+    if not readable:
+        return pick(
+            "🛡 Permissions: ⚠️ could not be checked (no reachable group)",
+            "🛡 الصلاحيات: ⚠️ تعذّر التحقق (لا مجموعة قابلة للوصول)",
+        )
+    total = len(readable)
+    full = sum(1 for check in readable if _state(check) == "ok")
+    off = sum(1 for check in readable if _state(check) == "none")
+    if full == total:
+        return pick(
+            f"🛡 Permissions: ✅ every right is enabled in all {total} group(s)",
+            f"🛡 الصلاحيات: ✅ كل الحقوق مفعّلة في المجموعات ({total})",
+        )
+    if full == 0 and off == total:
+        return pick(
+            f"🛡 Permissions: ⛔ enabled in none of the {total} group(s)",
+            f"🛡 الصلاحيات: ⛔ غير مفعّلة في أي مجموعة من {total}",
+        )
+    return pick(
+        f"🛡 Permissions: ⚠️ partial — complete in {full} of {total} group(s)",
+        f"🛡 الصلاحيات: ⚠️ جزئية — مكتملة في {full} من {total} مجموعة",
+    )
+
+
+def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
+    """The «Group permissions» section: every group, every missing right."""
+    lines = [pick("🛡 <b>Group permissions</b>", "🛡 <b>الصلاحيات للمجموعات</b>"), ""]
+    readable = [check for check in checks if check.reachable]
+    if not readable:
+        lines.append(
+            pick(
+                "⚠️ No storage group could be reached, so no right can be checked.",
+                "⚠️ لم يصل البوت إلى أي مجموعة تخزين، فلا يمكن فحص أي حق.",
+            )
+        )
+        return "\n".join(lines)
+
+    for check in readable:
+        state = _state(check)
+        label = _check_labels(check)
+        if state == "ok":
+            lines.append(f"✅ {label} — <code>{check.chat_id}</code>")
+            lines.append(
+                "   "
+                + pick(
+                    "all the required rights are enabled",
+                    "كل الحقوق المطلوبة مفعّلة",
+                )
+            )
+            continue
+        if state == "none":
+            lines.append(f"⛔ {label} — <code>{check.chat_id}</code>")
+            lines.append(
+                "   "
+                + pick(
+                    "the bot is not an administrator here, so no right applies",
+                    "البوت ليس مشرفاً هنا، فلا ينطبق أي حق",
+                )
+            )
+            continue
+
+        lines.append(f"⚠️ {label} — <code>{check.chat_id}</code>")
+        lines.append(
+            "   " + pick("missing: ", "ناقص: ") + right_labels(check.missing_rights)
+        )
+        if "can_invite_users" in check.missing_rights:
+            lines.append(
+                "   "
+                + pick(
+                    "⛔ no join request arrives, so links and approvals stop working",
+                    "⛔ لا يصل أي طلب انضمام، فتتعطّل الروابط والموافقات",
+                )
+            )
+        if "can_restrict_members" in check.missing_rights:
+            lines.append(
+                "   "
+                + pick(
+                    "⚠️ a non-allowed account that gets in cannot be removed",
+                    "⚠️ لا يمكن إخراج حساب غير مسموح إذا دخل",
+                )
+            )
+        if "can_delete_messages" in check.missing_rights:
+            lines.append(
+                "   "
+                + pick(
+                    "⚠️ a copy stays in the library when its registration fails",
+                    "⚠️ تبقى نسخة في المكتبة إذا فشل تسجيل الملف",
+                )
+            )
+        promotion_rights = {
+            "can_promote_members",
+            "can_change_info",
+            "can_pin_messages",
+            "can_manage_video_chats",
+        }
+        if promotion_rights.intersection(check.missing_rights):
+            lines.append(
+                "   "
+                + pick(
+                    "⚠️ the automatic promotion of the owner fails",
+                    "⚠️ تفشل الترقية التلقائية للمالك",
+                )
+            )
+
+    lines.append("")
+    lines.append(
+        pick(
+            "The seven rights come from the administrator screen of each group. "
+            "Enable all of them for the bot; the check refreshes with "
+            "«🔍 Check and update status».",
+            "الحقوق السبعة هي نفسها في شاشة المشرفين لكل مجموعة. فعّلها كلها للبوت؛ "
+            "ويتحدّث الفحص بزر «🔍 الفحص والتحديث الحالة».",
+        )
+    )
+    return "\n".join(lines)
 
 
 async def _bot_identity(bot) -> str:
@@ -227,6 +324,8 @@ async def status_text(
                 f"🛟 Reserve: {format_number(services.pending.total)} pending file(s)",
                 f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
             ),
+            # Only the overall state here; the per-right detail has its own section.
+            _permissions_summary(checks),
         ]
     )
     if not checks:
@@ -246,72 +345,6 @@ async def status_text(
                     f"   السبب: {_escape(check.reason[:160])}",
                 )
             )
-        lines.extend(_rights_lines(check))
-
-    # Rights are checked on their own block: a group with every upload working can
-    # still leave the join guard blind, which is exactly the silent failure.
-    rights_problems = [
-        check
-        for check in checks
-        if check.reachable and (check.is_admin is False or check.missing_rights)
-    ]
-    if rights_problems:
-        lines.extend(
-            [
-                "",
-                pick(
-                    "🛡 <b>Administrator rights</b>",
-                    "🛡 <b>صلاحيات الإشراف</b>",
-                ),
-            ]
-        )
-        affected: list[str] = []
-        for check in rights_problems:
-            if check.is_admin is False:
-                lines.append(f"⛔ {_check_labels(check)} — <code>{check.chat_id}</code>")
-                lines.append(
-                    "   • "
-                    + pick(
-                        "every required right is missing until the bot is added as an "
-                        "administrator",
-                        "كل الحقوق المطلوبة غائبة حتى يُضاف البوت مشرفاً",
-                    )
-                )
-                continue
-            lines.append(f"⚠️ {_check_labels(check)} — <code>{check.chat_id}</code>")
-            for name in check.missing_rights:
-                consequence = RIGHT_CONSEQUENCES.get(name)
-                if consequence is not None:
-                    lines.append(
-                        f"   • {pick(*_RIGHT_LABELS[name])}: {pick(*consequence)}"
-                    )
-                    affected.append(name)
-        if any(name == "can_invite_users" for name in affected):
-            lines.append(
-                pick(
-                    "⛔ «Invite users» is off: Telegram sends no join request at all, "
-                    "so links and approvals stop working in that group.",
-                    "⛔ حق «دعوة المستخدمين» مغلق: تيليغرام لا يرسل أي طلب انضمام، "
-                    "فتتعطّل الروابط والموافقات في تلك المجموعة.",
-                )
-            )
-        if any(name == "can_restrict_members" for name in affected):
-            lines.append(
-                pick(
-                    "⚠️ «Ban users» is off: a non-allowed account that gets in stays "
-                    "there and reads every file.",
-                    "⚠️ صلاحية «حظر الأعضاء» مغلقة: أي حساب غير مسموح يدخل يبقى "
-                    "ويقرأ كل الملفات.",
-                )
-            )
-        lines.append(
-            pick(
-                "Open the group → Administrators → the bot and enable every right "
-                "listed above; the check refreshes with «🔍 Check and update status».",
-                "افتح المجموعة ← المشرفون ← البوت وفعّل كل حق مذكور أعلاه؛ يتحدّث "
-                "الفحص بزر «🔍 الفحص والتحديث الحالة».",
-            )
-        )
 
     if broken:
         lines.extend(
@@ -335,7 +368,9 @@ async def status_text(
             )
             + "، ".join(views.category_label(category) for category in uncovered)
         )
+
+    lines.extend(["", permissions_text(checks)])
     return "\n".join(lines)
 
 
-__all__ = ["status_text"]
+__all__ = ["permissions_text", "right_labels", "status_text"]

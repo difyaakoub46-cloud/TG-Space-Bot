@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 from collections.abc import Sequence
 
+from src.bot.status import right_labels
 from src.bot.views import category_label, fallback_label
 from src.core.i18n import pick
 from src.services.files import RepairReport
@@ -22,6 +23,16 @@ _MAX_REASON = 200
 
 def _escape(value: object) -> str:
     return html.escape(str(value), quote=False)
+
+
+def _labels(check: StorageChatCheck) -> str:
+    """The group's name: the reserve, or the categories it stores."""
+    if check.is_fallback:
+        return fallback_label()
+    return "، ".join(
+        category_label(category)
+        for category in sorted(check.categories, key=lambda item: item.value)
+    ) or "—"
 
 
 def storage_check_text(
@@ -70,15 +81,7 @@ def storage_check_text(
             pick("⛔ <b>Unreachable groups</b>", "⛔ <b>مجموعات غير قابلة للوصول</b>")
         )
         for check in broken:
-            labels = (
-                fallback_label()
-                if check.is_fallback
-                else pick("، ", "، ").join(
-                    category_label(category)
-                    for category in sorted(check.categories, key=lambda item: item.value)
-                )
-            )
-            lines.append(f"• {labels} — <code>{check.chat_id}</code>")
+            lines.append(f"• {_labels(check)} — <code>{check.chat_id}</code>")
             if check.reason:
                 lines.append(
                     pick(
@@ -95,6 +98,40 @@ def storage_check_text(
             )
         )
 
+    # Uploads still work with a missing right, so the rights get their own block:
+    # without this line the guard could be blind while the startup report is green.
+    rights_problems = [
+        check
+        for check in checks
+        if check.reachable and (check.is_admin is False or check.missing_rights)
+    ]
+    if rights_problems:
+        lines.append("")
+        lines.append(
+            pick("🛡 <b>Administrator rights</b>", "🛡 <b>صلاحيات الإشراف</b>")
+        )
+        lines.append(
+            pick(
+                f"⚠️ Missing in {format_number(len(rights_problems))} of "
+                f"{format_number(len(checks))} group(s):",
+                f"⚠️ ناقصة في {format_number(len(rights_problems))} من "
+                f"{format_number(len(checks))} مجموعة:",
+            )
+        )
+        for check in rights_problems:
+            state = (
+                pick("not an administrator", "ليس مشرفاً")
+                if check.is_admin is False
+                else right_labels(check.missing_rights)
+            )
+            lines.append(f"• {_labels(check)} — <code>{check.chat_id}</code>: {state}")
+        lines.append(
+            pick(
+                "Every right: «🩺 General status» → «🛡 Group permissions».",
+                "تفصيل كل حق: «🩺 الحالة العامة» ← «🛡 الصلاحيات للمجموعات».",
+            )
+        )
+
     # Without any configured group the first line already says it all.
     if missing and checks:
         lines.append("")
@@ -107,7 +144,7 @@ def storage_check_text(
             )
         )
 
-    if checks and not broken and not missing:
+    if checks and not broken and not missing and not rights_problems:
         lines.append("")
         lines.append(pick("You can upload files now.", "يمكنك رفع الملفات الآن."))
     return "\n".join(lines)
@@ -178,7 +215,7 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
     lines.append(
         pick(
             f"⏳ Pending now: {format_number(remaining)}",
-            f"⏳ المعلّق الآن: {format_number(remaining)}",
+            f"⏳ Pending now: {format_number(remaining)}",
         )
     )
     if report.errors:

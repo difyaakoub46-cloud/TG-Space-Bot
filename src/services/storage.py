@@ -22,11 +22,10 @@ from src.utils.telegram import call_with_retry
 logger = logging.getLogger(__name__)
 
 
-# The administrator rights the bot must hold in every storage group. A missing
-# right is not cosmetic: without ``can_invite_users`` Telegram never sends the
-# join requests at all, without ``can_restrict_members`` an unlisted account stays
-# in the group, and without any of the rights it grants the owner the promotion is
-# refused as a whole.
+# The rights the bot must hold in every storage group, named as Telegram names
+# them. None is cosmetic: without ``can_invite_users`` no join request is sent at
+# all, without ``can_restrict_members`` an unlisted account stays in the group, and
+# without any right it grants the owner the promotion is refused as a whole.
 REQUIRED_RIGHTS: tuple[tuple[str, str, str], ...] = (
     ("can_invite_users", "Invite users via link", "دعوة المستخدمين عبر رابط"),
     ("can_restrict_members", "Ban users", "حظر الأعضاء"),
@@ -38,28 +37,6 @@ REQUIRED_RIGHTS: tuple[tuple[str, str, str], ...] = (
 )
 
 ALL_RIGHT_NAMES: tuple[str, ...] = tuple(name for name, _en, _ar in REQUIRED_RIGHTS)
-
-# What each missing right actually breaks, said in one phrase.
-RIGHT_CONSEQUENCES: dict[str, tuple[str, str]] = {
-    "can_invite_users": (
-        "no join requests arrive, so the join guard cannot work",
-        "لا تصل طلبات الانضمام، فتتعطّل حماية الدخول",
-    ),
-    "can_restrict_members": (
-        "an unlisted account cannot be removed from the group",
-        "لا يمكن إخراج حساب غير مسموح من المجموعة",
-    ),
-    "can_delete_messages": (
-        "a copy is left in the library when its registration fails",
-        "تبقى نسخة في المكتبة إذا فشل تسجيل الملف",
-    ),
-}
-
-for _name in ("can_promote_members", "can_change_info", "can_pin_messages", "can_manage_video_chats"):
-    RIGHT_CONSEQUENCES[_name] = (
-        "the automatic promotion of the owner fails",
-        "تفشل الترقية التلقائية للمالك",
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,9 +236,9 @@ class StorageService:
     async def check_rights(self, chat_id: int) -> tuple[bool, tuple[str, ...]]:
         """Whether the bot is an administrator here, and which rights it lacks.
 
-        A missing right is reported instead of a generic failure: the owner has to
-        know that, for example, «Ban users» off reopens the invite-link hole while
-        every upload still works, which is the kind of breakage nothing else shows.
+        Reported per right rather than as one failure: «Ban users» off reopens the
+        invite-link hole while every upload keeps working, which is the kind of
+        breakage nothing else on the screen would show.
         """
         try:
             member = await self._bot.get_chat_member(
@@ -280,10 +257,6 @@ class StorageService:
             return False, ALL_RIGHT_NAMES
 
         missing = tuple(
-            name for name in ALL_RIGHT_NAMES if not bool(getattr(member, name, False))
+            name for name in ALL_RIGHT_NAMES if not getattr(member, name, False)
         )
-        if missing:
-            logger.warning(
-                "The bot lacks %s in storage chat %s", ", ".join(missing), chat_id
-            )
         return True, missing
