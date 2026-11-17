@@ -192,8 +192,9 @@ async def file_send_callback(
         return
 
     # The delivered copy is a real message in the chat: track it so the main menu
-    # removes it too instead of leaving the file behind.
+    # removes it too, and so «↩️ Back» can remove it when its setting says so.
     await views.remember(state, delivered_id)
+    await navigation.track_delivered(state, delivered_id)
     await navigation.navigate_callback(
         callback,
         state,
