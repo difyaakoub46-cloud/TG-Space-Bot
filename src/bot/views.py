@@ -10,7 +10,7 @@ from __future__ import annotations
 import html
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -22,6 +22,9 @@ from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size, human_total
 from src.utils.sorting import SortDirection, SortField, SortSpec
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from src.services.pending import PendingFile
 
 _NOT_MODIFIED = "message is not modified"
 _MAX_TRACKED_MESSAGES = 100
@@ -814,6 +817,83 @@ def file_saved_text(record: StoredFile) -> str:
                 f"Fingerprint: <code>{_escape(record.hash_short)}</code>",
                 f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>",
             )
+        )
+    return "\n".join(lines)
+
+
+def files_saved_text(
+    records: Sequence[StoredFile],
+    duplicates: Sequence[StoredFile] = (),
+    quarantined: Sequence[PendingFile] = (),
+    failures: Sequence[tuple[str, str]] = (),
+) -> str:
+    """The result of a whole album: every file by name, then what did not land.
+
+    An album is saved item by item, so one card would hide the other files. This
+    text lists all of them, and the keyboard keeps one row per file with its own
+    buttons.
+    """
+    total = len(records) + len(duplicates)
+    lines = [
+        pick(
+            f"✅ <b>{format_number(total)} files were saved</b>",
+            f"✅ <b>تم حفظ {format_number(total)} ملفات</b>",
+        ),
+        "",
+    ]
+    for index, record in enumerate(records, start=1):
+        lines.append(
+            f"{index}. 📄 {_escape(record.file_name)} — "
+            f"{category_label(record.category)} · {_escape(record.size_human)}"
+        )
+
+    if duplicates:
+        lines.extend(
+            [
+                "",
+                pick(
+                    "♻️ <b>Already stored (no second copy):</b>",
+                    "♻️ <b>موجودة أصلاً (دون نسخة ثانية):</b>",
+                ),
+            ]
+        )
+        for record in duplicates:
+            lines.append(f"• 📄 {_escape(record.file_name)}")
+
+    if quarantined:
+        lines.extend(
+            [
+                "",
+                pick(
+                    "🛟 <b>Held in the reserve group:</b>",
+                    "🛟 <b>محفوظة في مجموعة الاحتياط:</b>",
+                ),
+            ]
+        )
+        for pending in quarantined:
+            lines.append(f"• 📄 {_escape(pending.file_name)}")
+
+    if failures:
+        lines.extend(
+            [
+                "",
+                pick("❌ <b>Not saved:</b>", "❌ <b>لم تُحفظ:</b>"),
+            ]
+        )
+        for file_name, reason in failures:
+            lines.append(f"• {_escape(file_name)} — <code>{reason}</code>")
+
+    if records or duplicates:
+        lines.extend(
+            [
+                "",
+                pick(
+                    "Open a file to use its own buttons, or send it straight to a "
+                    "folder with «📁 Folder».",
+                    "افتح الملف لتستعمل أزراره الخاصة، أو أرسله مباشرة إلى مجلد "
+                    "بزر «📁 مجلد».",
+                ),
+            ]
         )
     return "\n".join(lines)
 
