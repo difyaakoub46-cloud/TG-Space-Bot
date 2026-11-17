@@ -18,6 +18,58 @@ Telegram bot that saves incoming files into the right Telegram storage group (do
    group chat id in `TG_STORAGE_CHAT_<CATEGORY>`.
 5. Start the bot: `python main.py`.
 
+## Group setup
+
+Every storage group needs the bot as an **administrator**, with these seven rights
+turned on in the group's administrator screen. «🩺 General status» →
+«🛡 Group permissions» lists every group with the rights it is missing, and
+«🔍 Re-check permissions» reads them again without a restart.
+
+| Right (as Telegram names it) | What breaks when it is off |
+| --- | --- |
+| Invite users via link | No invite link and no join request can be created, so «🔗 Join the groups» fails and no join request ever arrives. |
+| Ban users | An account that is not in `ALLOWED_USER_IDS` and gets in by another route cannot be removed; the bot reports the failure to `OWNER_ID` instead. The automatic promotion grants this right too, so that fails as well. |
+| Delete messages | When Supabase refuses a registration, the fresh copy cannot be pulled back out of the library, so the group keeps a file the library has no row for. |
+| Add new admins | An allowed account that joins is not promoted automatically and stays a plain member. |
+| Change group info | The automatic promotion is refused as a whole: Telegram rejects a promotion that grants a right the bot does not hold itself. |
+| Pin messages | Same: the automatic promotion is refused. |
+| Manage video chats | Same: the automatic promotion is refused. |
+
+`can_manage_chat` needs no separate switch — it comes with the administrator
+status. A group that cannot be reached is reported as unchecked, never as missing
+rights, so the screen only claims what it actually read.
+
+### BotFather
+
+In `@BotFather` → `/mybots` → the bot:
+
+- **`/setjoingroups` → Enable** — required, otherwise the bot cannot be added to
+  any storage group.
+- **`/setprivacy`** — leave it as it is. The bot never reads group messages: files
+  arrive in the private chat and are copied into a group by id. Disable privacy
+  only if you later add handlers that need group messages.
+- **`/setcommands`** — optional, publishes the command list in the menu button.
+
+If a group's state looks stale after you change a right, remove the bot from the
+group and add it back as an administrator; Telegram caches the membership.
+
+### Invite links and the join guard
+
+Two variables control the gate behind «🔗 Join the groups»:
+
+- `JOIN_GUARD` — default `true`. The link creates a **join request**
+  (`creates_join_request`) that the bot approves for an allowed id only, and any
+  unlisted account that reaches a storage group by another route is removed. With
+  `false` the link is a plain one-use link: no approval, no removal (only for
+  disposable groups).
+- `JOIN_LINK_TTL_MINUTES` — default `10`, kept between `1` and `1440`. Every link
+  expires after that, and is revoked on its first use either way.
+
+`creates_join_request` cannot be combined with `member_limit`, so with the guard on
+the revoke-on-first-use replaces the one-use cap. Without «Invite users via link»
+no link exists at all, and without «Ban users» the removal cannot happen. The full
+flow is under [Storage-group security](#storage-group-security).
+
 ## Checks
 
 ```bash
@@ -66,11 +118,13 @@ return to the previous screen (the trail lives in the FSM data).
 
 ⚙️ Settings        → 🌐 Change language · 🔗 Join the groups · ❓ Help
 🩺 General status  → 🔍 Check and update status · 📊 Statistics ·
-                     🛟 Reserve and pending files
+                     🛡 Group permissions · 🛟 Reserve and pending files
 ```
 
-The statistics and the reserve section are opened from the status screen, so
-«Back» returns there instead of jumping to the main menu.
+The statistics, the group permissions and the reserve section are opened from the
+status screen, so «Back» returns there instead of jumping to the main menu. The
+status screen itself keeps one line about the rights (all, some, or none); the
+per-group detail lives only in «🛡 Group permissions».
 
 ## Languages
 
