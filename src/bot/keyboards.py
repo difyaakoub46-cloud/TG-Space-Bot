@@ -499,16 +499,12 @@ def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
         (SortField.name, SortDirection.asc, pick("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z")),
         (SortField.name, SortDirection.desc, pick("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A")),
     )
-    for direction_field, direction_value, label in (
-        (item[0], item[1], item[2]) for item in options
-    ):
-        active = sort.field is direction_field and sort.direction is direction_value
+    for field, direction, label in options:
+        active = sort.field is field and sort.direction is direction
         builder.button(
             text=f"{'✅ ' if active else ''}{label}",
             callback_data=SortCB(
-                action="set",
-                field=direction_field.value,
-                direction=direction_value.value,
+                action="set", field=field.value, direction=direction.value
             ).pack(),
         )
     builder.adjust(2)
