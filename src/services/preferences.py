@@ -30,6 +30,8 @@ class UserPreferences:
         self._languages: dict[int, Language] = {}
         # False only when the user turned the «The file was saved» card off.
         self._saved_screen: dict[int, bool] = {}
+        # True only when opened files must survive «↩️ Back» until the main menu.
+        self._keep_sent: dict[int, bool] = {}
 
     @property
     def path(self) -> Path:
@@ -68,6 +70,17 @@ class UserPreferences:
                 except (TypeError, ValueError):
                     logger.warning("Skipped an invalid saved-screen entry: %r", key)
 
+        kept = raw.get("keep_sent") if isinstance(raw, dict) else None
+        if isinstance(kept, dict):
+            for key, value in kept.items():
+                if not isinstance(value, bool):
+                    logger.warning("Skipped an invalid keep-sent entry: %r", key)
+                    continue
+                try:
+                    self._keep_sent[int(key)] = value
+                except (TypeError, ValueError):
+                    logger.warning("Skipped an invalid keep-sent entry: %r", key)
+
     def _write(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(
@@ -79,6 +92,10 @@ class UserPreferences:
                 "saved_screen": {
                     str(user_id): show
                     for user_id, show in self._saved_screen.items()
+                },
+                "keep_sent": {
+                    str(user_id): keep
+                    for user_id, keep in self._keep_sent.items()
                 },
             },
             indent=2,
@@ -110,6 +127,18 @@ class UserPreferences:
         self._saved_screen[int(user_id)] = bool(show)
         self._write()
         return bool(show)
+
+    def keep_sent_files(self, user_id: int | None) -> bool:
+        """Whether opened files survive «↩️ Back» (default off: they are removed)."""
+        if user_id is None:
+            return False
+        return self._keep_sent.get(int(user_id), False)
+
+    async def set_keep_sent_files(self, user_id: int, keep: bool) -> bool:
+        """Remember the user's choice about keeping the files opened from a screen."""
+        self._keep_sent[int(user_id)] = bool(keep)
+        self._write()
+        return bool(keep)
 
     @property
     def total(self) -> int:
