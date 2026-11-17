@@ -16,7 +16,9 @@ from src.bot.keyboards import (
     LIBRARY_TEXTS,
     CategoryCB,
     FileCB,
+    HistoryCB,
     MenuCB,
+    SavedCB,
     delete_confirm_kb,
 )
 from src.bot.states import RenameStates
@@ -56,6 +58,76 @@ async def categories_callback(
         bot,
         services,
         {"k": "categories", "u": int(callback.from_user.id)},
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "history"))
+async def menu_history_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Open «🕘 History uploads»: the whole archive, newest first."""
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback, state, bot, services, {"k": "history"}
+    )
+
+
+@router.callback_query(HistoryCB.filter())
+async def history_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Change the category, the date window or the page of the archive.
+
+    The choice lives in the screen key, so a page change keeps the filter and a
+    filter change restarts from the first page.
+    """
+    data = HistoryCB.unpack(callback.data)
+    stored = await state.get_data()
+    screen = dict(stored.get("screen_key") or {})
+    if screen.get("k") != "history":
+        screen = {"k": "history"}
+
+    if data.action == "cat":
+        screen["c"] = "" if data.value in ("", "all") else data.value
+        screen.pop("p", None)
+    elif data.action == "span":
+        screen["r"] = data.value or "all"
+        screen.pop("p", None)
+    elif data.action == "page":
+        try:
+            screen["p"] = max(1, int(data.value))
+        except (TypeError, ValueError):
+            screen["p"] = 1
+
+    await navigation.navigate_callback(
+        callback, state, bot, services, screen, push=False
+    )
+
+
+@router.callback_query(SavedCB.filter())
+async def saved_step_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Walk through an upload batch: «Next ▶» / «◀ Previous»."""
+    data = SavedCB.unpack(callback.data)
+    stored = await state.get_data()
+    screen = dict(stored.get("screen_key") or {})
+    if screen.get("k") != "saved":
+        await navigation.navigate_callback(
+            callback,
+            state,
+            bot,
+            services,
+            {"k": "categories", "u": int(callback.from_user.id)},
+            push=False,
+        )
+        return
+    try:
+        screen["i"] = max(0, int(data.value))
+    except (TypeError, ValueError):
+        screen["i"] = 0
+    await navigation.navigate_callback(
+        callback, state, bot, services, screen, push=False
     )
 
 

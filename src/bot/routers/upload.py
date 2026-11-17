@@ -22,7 +22,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from src.bot import navigation, views
-from src.bot.keyboards import main_menu_kb, saved_files_kb
+from src.bot.keyboards import main_menu_kb
 from src.core.i18n import pick
 from src.db.models import StoredFile
 from src.services.container import Services
@@ -109,6 +109,11 @@ async def _handle_one(
     if candidate is None:
         return
 
+    # «Settings → 📨 Saved-file screen»: when it is off, an upload leaves no card
+    # behind (a held or failed file is still reported).
+    user_id = int(message.from_user.id) if message.from_user else None
+    show_saved = services.preferences.show_saved_screen(user_id)
+
     await views.reset_flow(state)
     # Track the incoming file too, so a copy that survives any failure is removed
     # the next time the main menu is opened.
@@ -144,6 +149,8 @@ async def _handle_one(
         # The same Telegram file is already stored: no second copy, just its page.
         await safe_delete_message(bot, message.chat.id, message.message_id)
         await safe_delete_message(bot, status.chat.id, status.message_id)
+        if not show_saved:
+            return
         await navigation.navigate_message(
             message,
             state,
@@ -169,6 +176,10 @@ async def _handle_one(
     # screen instead, which keeps the chat free of one message per upload.
     await safe_delete_message(bot, message.chat.id, message.message_id)
     await safe_delete_message(bot, status.chat.id, status.message_id)
+
+    if not show_saved:
+        return
+
     await navigation.navigate_message(
         message,
         state,
@@ -236,6 +247,23 @@ async def _handle_album(
     if batch.empty:
         return
 
+    user_id = int(first.from_user.id) if first.from_user else 0
+    if not services.preferences.show_saved_screen(user_id):
+        # Silent mode: nothing is drawn for a clean batch. A held or failed file
+        # still deserves a warning, so it keeps the reserve screen.
+        if batch.quarantined or batch.failures:
+            await navigation.navigate_message(
+                first,
+                state,
+                bot,
+                services,
+                {"k": "pending"},
+                notice=views.files_saved_text(
+                    [], [], batch.quarantined, batch.failures
+                ),
+            )
+        return
+
     # An album that produced exactly one stored file keeps the normal card, as if
     # it had been sent alone.
     if len(batch.saved) == 1 and not (
@@ -252,22 +280,21 @@ async def _handle_album(
         )
         return
 
-    user_id = int(first.from_user.id) if first.from_user else 0
+    # Every saved (and already stored) file is reachable one by one: the batch
+    # screen starts on the first file and «Next ▶» walks to the last one.
+    batch_files = [*batch.saved, *batch.duplicates]
     await navigation.navigate_message(
         first,
         state,
         bot,
         services,
-        {"k": "categories", "u": user_id},
-        notice=views.files_saved_text(
-            batch.saved,
-            batch.duplicates,
-            batch.quarantined,
-            batch.failures,
-        ),
-        markup=saved_files_kb(
-            batch.saved,
-            batch.duplicates,
-            show_pending=bool(batch.quarantined),
-        ),
+        {
+            "k": "saved",
+            "ids": ",".join(record.id for record in batch_files),
+            "dup": ",".join(record.id for record in batch.duplicates),
+            "i": 0,
+            "p": len(batch.quarantined),
+            "x": len(batch.failures),
+        },
+        push=False,
     )
