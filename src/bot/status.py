@@ -232,6 +232,16 @@ def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
     return "\n".join(lines)
 
 
+async def statistics_text(services: Services) -> str:
+    """The «Statistics» screen: the counts next to the group holding each category."""
+    try:
+        checks = await services.storage.check_chats()
+    except Exception:  # noqa: BLE001 - the screen must still render
+        logger.exception("Could not verify the storage groups")
+        checks = []
+    return views.stats_text(await services.files.stats(), checks)
+
+
 async def group_permissions_text(services: Services) -> str:
     """The «Group permissions» screen, re-reading the groups before listing them."""
     try:
@@ -341,7 +351,8 @@ async def status_text(
                 f"🛟 Reserve: {format_number(services.pending.total)} pending file(s)",
                 f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
             ),
-            # Only the overall state here; the per-right detail has its own section.
+            # Only the overall state here; the per-right detail has its own section,
+            # and the per-group ids live in «Statistics».
             _permissions_summary(checks),
         ]
     )
@@ -352,26 +363,16 @@ async def status_text(
                 "⚠️ لم تُهيّأ أي مجموعة تخزين بعد.",
             )
         )
-    for check in checks:
-        mark = "✅" if check.reachable else "⛔"
-        lines.append(f"{mark} {_check_labels(check)} — <code>{check.chat_id}</code>")
-        if not check.reachable and check.reason:
-            lines.append(
-                pick(
-                    f"   Reason: {_escape(check.reason[:160])}",
-                    f"   السبب: {_escape(check.reason[:160])}",
-                )
-            )
 
     if broken:
         lines.extend(
             [
                 "",
                 pick(
-                    "⚠️ Add the bot as an admin in the groups marked ⛔, or fix their "
-                    "ids in Render.",
-                    "⚠️ أضف البوت مشرفاً في المجموعات المعلّمة بـ⛔ أو صحّح "
-                    "معرّفها في Render.",
+                    "⚠️ Add the bot as an admin in the groups marked ⛔ in "
+                    "«📊 Statistics», or fix their ids in Render.",
+                    "⚠️ أضف البوت مشرفاً في المجموعات المعلّمة بـ⛔ داخل "
+                    "«📊 الإحصائيات» أو صحّح معرّفها في Render.",
                 ),
             ]
         )
@@ -389,4 +390,10 @@ async def status_text(
     return "\n".join(lines)
 
 
-__all__ = ["group_permissions_text", "permissions_text", "right_labels", "status_text"]
+__all__ = [
+    "group_permissions_text",
+    "permissions_text",
+    "right_labels",
+    "statistics_text",
+    "status_text",
+]
