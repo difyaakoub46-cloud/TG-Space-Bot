@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot
+from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import (
     TelegramAPIError,
     TelegramBadRequest,
@@ -21,6 +22,46 @@ from src.utils.telegram import call_with_retry
 logger = logging.getLogger(__name__)
 
 
+# The administrator rights the bot must hold in every storage group. A missing
+# right is not cosmetic: without ``can_invite_users`` Telegram never sends the
+# join requests at all, without ``can_restrict_members`` an unlisted account stays
+# in the group, and without any of the rights it grants the owner the promotion is
+# refused as a whole.
+REQUIRED_RIGHTS: tuple[tuple[str, str, str], ...] = (
+    ("can_invite_users", "Invite users via link", "دعوة المستخدمين عبر رابط"),
+    ("can_restrict_members", "Ban users", "حظر الأعضاء"),
+    ("can_delete_messages", "Delete messages", "حذف الرسائل"),
+    ("can_promote_members", "Add new admins", "إضافة مشرفين"),
+    ("can_change_info", "Change group info", "تغيير معلومات المجموعة"),
+    ("can_pin_messages", "Pin messages", "تثبيت الرسائل"),
+    ("can_manage_video_chats", "Manage video chats", "إدارة محادثات الفيديو"),
+)
+
+ALL_RIGHT_NAMES: tuple[str, ...] = tuple(name for name, _en, _ar in REQUIRED_RIGHTS)
+
+# What each missing right actually breaks, said in one phrase.
+RIGHT_CONSEQUENCES: dict[str, tuple[str, str]] = {
+    "can_invite_users": (
+        "no join requests arrive, so the join guard cannot work",
+        "لا تصل طلبات الانضمام، فتتعطّل حماية الدخول",
+    ),
+    "can_restrict_members": (
+        "an unlisted account cannot be removed from the group",
+        "لا يمكن إخراج حساب غير مسموح من المجموعة",
+    ),
+    "can_delete_messages": (
+        "a copy is left in the library when its registration fails",
+        "تبقى نسخة في المكتبة إذا فشل تسجيل الملف",
+    ),
+}
+
+for _name in ("can_promote_members", "can_change_info", "can_pin_messages", "can_manage_video_chats"):
+    RIGHT_CONSEQUENCES[_name] = (
+        "the automatic promotion of the owner fails",
+        "تفشل الترقية التلقائية للمالك",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class StorageChatCheck:
     """Result of reaching one storage group at startup."""
@@ -31,6 +72,9 @@ class StorageChatCheck:
     title: str | None = None
     reason: str | None = None
     is_fallback: bool = False
+    # None means the rights were never read (an unreachable group).
+    is_admin: bool | None = None
+    missing_rights: tuple[str, ...] = ()
 
 
 _MISSING_MESSAGE_MARKERS = (
@@ -198,6 +242,7 @@ class StorageService:
                 logger.info(
                     "Storage chat ready: %s (%s)", chat_id, chat.title or chat.type
                 )
+                is_admin, missing = await self.check_rights(chat_id)
                 checks.append(
                     StorageChatCheck(
                         chat_id=chat_id,
@@ -205,6 +250,40 @@ class StorageService:
                         reachable=True,
                         title=chat.title,
                         is_fallback=chat_id == fallback_id,
+                        is_admin=is_admin,
+                        missing_rights=missing,
                     )
                 )
         return checks
+
+    async def check_rights(self, chat_id: int) -> tuple[bool, tuple[str, ...]]:
+        """Whether the bot is an administrator here, and which rights it lacks.
+
+        A missing right is reported instead of a generic failure: the owner has to
+        know that, for example, «Ban users» off reopens the invite-link hole while
+        every upload still works, which is the kind of breakage nothing else shows.
+        """
+        try:
+            member = await self._bot.get_chat_member(
+                chat_id=self._current(chat_id), user_id=self._bot.id
+            )
+        except TelegramAPIError:
+            logger.warning(
+                "Could not read the bot's rights in %s", chat_id, exc_info=True
+            )
+            return False, ALL_RIGHT_NAMES
+
+        status = getattr(member, "status", None)
+        if status == ChatMemberStatus.CREATOR:
+            return True, ()
+        if status != ChatMemberStatus.ADMINISTRATOR:
+            return False, ALL_RIGHT_NAMES
+
+        missing = tuple(
+            name for name in ALL_RIGHT_NAMES if not bool(getattr(member, name, False))
+        )
+        if missing:
+            logger.warning(
+                "The bot lacks %s in storage chat %s", ", ".join(missing), chat_id
+            )
+        return True, missing

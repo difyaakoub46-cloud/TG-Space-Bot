@@ -19,7 +19,11 @@ from src.bot import views
 from src.core.i18n import pick
 from src.db.repository import SupabaseError
 from src.services.container import Services
-from src.services.storage import StorageChatCheck
+from src.services.storage import (
+    REQUIRED_RIGHTS,
+    RIGHT_CONSEQUENCES,
+    StorageChatCheck,
+)
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 
@@ -71,6 +75,46 @@ def _uptime(seconds: float) -> str:
         )
     )
     return pick(" and ".join(parts), " و".join(parts))
+
+
+_RIGHT_LABELS: dict[str, tuple[str, str]] = {
+    name: (english, arabic) for name, english, arabic in REQUIRED_RIGHTS
+}
+
+
+def _rights_list(missing: Sequence[str]) -> str:
+    """The missing rights, named the way Telegram's own screen names them."""
+    return " · ".join(
+        pick(*_RIGHT_LABELS[name]) for name in missing if name in _RIGHT_LABELS
+    )
+
+
+def _rights_lines(check: StorageChatCheck) -> list[str]:
+    """One line per group: is the bot an admin, and which right is missing."""
+    if check.is_admin is None:
+        return []
+    if not check.is_admin:
+        return [
+            pick(
+                "   🛡 Admin: ⛔ the bot is not an administrator here — joining is "
+                "unguarded and the promotion cannot work",
+                "   🛡 الإشراف: ⛔ البوت ليس مشرفاً هنا — الدخول بلا حماية والترقية "
+                "لا تعمل",
+            )
+        ]
+    if not check.missing_rights:
+        return [
+            pick(
+                "   🛡 Admin: ✅ admin with every required right",
+                "   🛡 الإشراف: ✅ مشرف مع كل الحقوق المطلوبة",
+            )
+        ]
+    return [
+        pick(
+            f"   🛡 Admin: ⚠️ missing {_rights_list(check.missing_rights)}",
+            f"   🛡 الإشراف: ⚠️ ناقص: {_rights_list(check.missing_rights)}",
+        )
+    ]
 
 
 def _check_labels(check: StorageChatCheck) -> str:
@@ -202,6 +246,72 @@ async def status_text(
                     f"   السبب: {_escape(check.reason[:160])}",
                 )
             )
+        lines.extend(_rights_lines(check))
+
+    # Rights are checked on their own block: a group with every upload working can
+    # still leave the join guard blind, which is exactly the silent failure.
+    rights_problems = [
+        check
+        for check in checks
+        if check.reachable and (check.is_admin is False or check.missing_rights)
+    ]
+    if rights_problems:
+        lines.extend(
+            [
+                "",
+                pick(
+                    "🛡 <b>Administrator rights</b>",
+                    "🛡 <b>صلاحيات الإشراف</b>",
+                ),
+            ]
+        )
+        affected: list[str] = []
+        for check in rights_problems:
+            if check.is_admin is False:
+                lines.append(f"⛔ {_check_labels(check)} — <code>{check.chat_id}</code>")
+                lines.append(
+                    "   • "
+                    + pick(
+                        "every required right is missing until the bot is added as an "
+                        "administrator",
+                        "كل الحقوق المطلوبة غائبة حتى يُضاف البوت مشرفاً",
+                    )
+                )
+                continue
+            lines.append(f"⚠️ {_check_labels(check)} — <code>{check.chat_id}</code>")
+            for name in check.missing_rights:
+                consequence = RIGHT_CONSEQUENCES.get(name)
+                if consequence is not None:
+                    lines.append(
+                        f"   • {pick(*_RIGHT_LABELS[name])}: {pick(*consequence)}"
+                    )
+                    affected.append(name)
+        if any(name == "can_invite_users" for name in affected):
+            lines.append(
+                pick(
+                    "⛔ «Invite users» is off: Telegram sends no join request at all, "
+                    "so links and approvals stop working in that group.",
+                    "⛔ حق «دعوة المستخدمين» مغلق: تيليغرام لا يرسل أي طلب انضمام، "
+                    "فتتعطّل الروابط والموافقات في تلك المجموعة.",
+                )
+            )
+        if any(name == "can_restrict_members" for name in affected):
+            lines.append(
+                pick(
+                    "⚠️ «Ban users» is off: a non-allowed account that gets in stays "
+                    "there and reads every file.",
+                    "⚠️ صلاحية «حظر الأعضاء» مغلقة: أي حساب غير مسموح يدخل يبقى "
+                    "ويقرأ كل الملفات.",
+                )
+            )
+        lines.append(
+            pick(
+                "Open the group → Administrators → the bot and enable every right "
+                "listed above; the check refreshes with «🔍 Check and update status».",
+                "افتح المجموعة ← المشرفون ← البوت وفعّل كل حق مذكور أعلاه؛ يتحدّث "
+                "الفحص بزر «🔍 الفحص والتحديث الحالة».",
+            )
+        )
 
     if broken:
         lines.extend(
