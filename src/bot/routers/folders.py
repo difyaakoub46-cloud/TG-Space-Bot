@@ -92,6 +92,37 @@ async def folders_page_callback(
     )
 
 
+@router.callback_query(FolderCB.filter(F.action == "fpage"))
+async def folder_files_page_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Turn the pages of the files inside the folder that is already open."""
+    data = FolderCB.unpack(callback.data)
+    try:
+        page = max(1, int(data.value))
+    except (TypeError, ValueError):
+        page = 1
+
+    stored = dict((await state.get_data()).get("screen_key") or {})
+    if stored.get("k") != "folder":
+        # No folder is open (an older button, or the trail was cleared): show the
+        # folder list instead of failing the tap.
+        await navigation.navigate_callback(
+            callback,
+            state,
+            bot,
+            services,
+            _folders_key(_user_id(callback)),
+            push=False,
+        )
+        return
+
+    stored["p"] = page
+    await navigation.navigate_callback(
+        callback, state, bot, services, stored, push=False
+    )
+
+
 @router.callback_query(FolderCB.filter(F.action == "noop"))
 async def folders_page_indicator_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
