@@ -203,18 +203,14 @@ async def build(
             )
 
     if kind == "history":
-        category_value = str(screen.get("c") or "")
-        category = parse_category(category_value) if category_value else None
-        span = str(screen.get("r") or "all")
-        per_page = services.settings.results_per_page()
-        files, total, page = await services.files.history_page(
-            category, span, page=_page(screen), per_page=per_page
+        # The period (f), its anchor day (d) and the page (p) are the whole key:
+        # the database applies the window and the 8-file slice.
+        page = await services.files.history_page(
+            str(screen.get("f") or "day"),
+            screen.get("d"),
+            page=_page(screen),
         )
-        pages = max(1, -(-total // per_page))
-        return (
-            library_views.history_text(files, total, category, span, page, pages),
-            history_kb(files, category, span, page, pages),
-        )
+        return library_views.history_text(page), history_kb(page)
 
     if kind == "language":
         language = get_language()
