@@ -32,7 +32,7 @@ from src.bot.library_views import history_period_label
 from src.core.i18n import pick
 from src.db.models import Folder
 from src.services.files import FileListPage, history_date
-from src.utils.formatters import format_number
+from src.utils.formatters import format_number, truncate_name
 from src.utils.sorting import sort_from_key
 
 VIEWS: tuple[str, ...] = ("search", "category")
@@ -274,9 +274,16 @@ def sort_menu_text(ctx: FileListContext) -> str:
 # Keyboard
 # --------------------------------------------------------------------------- #
 def _file_label(file) -> str:
-    """One file button: its name, its size and the time it was saved."""
-    text = f"📄 {file.file_name} - {file.size_human} - {file.created_at:%H:%M}"
-    return text if len(text) <= 55 else f"{text[:54]}…"
+    """One file button: its name, its size and the time it was saved.
+
+    Every file button of the bot has exactly this shape. The name is cut in the
+    middle (first 12 characters, «...», last 8), so a long name can never wrap the
+    button onto a second line and change the height of the panel.
+    """
+    return (
+        f"📄 {truncate_name(file.file_name)} - {file.size_human} - "
+        f"{file.created_at:%H:%M}"
+    )
 
 
 def _folder_label(folder: Folder) -> str:
@@ -411,8 +418,10 @@ def file_list_kb(
     return builder.as_markup()
 
 
-def _period_option_label(span: str, anchor: date, *, active: bool) -> str:
-    """One picker button: the day itself, a week's range, a month or a year."""
+def _period_option_label(
+    span: str, anchor: date, *, active: bool, count: int | None = None
+) -> str:
+    """One picker button: the day, week, month or year, then its file count."""
     if span == "week":
         first = anchor - timedelta(days=anchor.weekday())
         last = first + timedelta(days=6)
@@ -423,10 +432,14 @@ def _period_option_label(span: str, anchor: date, *, active: bool) -> str:
         text = f"{anchor:%Y}"
     else:
         text = anchor.isoformat()
+    if count is not None:
+        text = f"{text} · {format_number(count)}"
     return f"{'✅ ' if active else ''}{text}"
 
 
-def period_picker_text(ctx: FileListContext, anchors: Sequence[date]) -> str:
+def period_picker_text(
+    ctx: FileListContext, periods: Sequence[tuple[date, int]]
+) -> str:
     """The picker panel: the periods that actually hold a file."""
     unit = {
         "week": pick("week", "أسبوع"),
@@ -437,13 +450,14 @@ def period_picker_text(ctx: FileListContext, anchors: Sequence[date]) -> str:
         pick("📅 <b>Pick a period</b>", "📅 <b>اختر فترة</b>"),
         "",
         pick(
-            f"Every {unit} that holds files, newest first. Pick one to jump "
-            "straight to it; the one on screen is marked ✅.",
-            f"كل {unit} فيه ملفات، الأحدث أولاً. اختر واحدة للانتقال إليها "
-            "مباشرة؛ الفترة المعروضة معلّمة ✅.",
+            f"Every {unit} that holds files, newest first, with its number of "
+            "files. Pick one to jump straight to it; the one on screen is marked "
+            "✅.",
+            f"كل {unit} فيه ملفات، الأحدث أولاً، ومعه عدد ملفاته. اختر واحدة "
+            "للانتقال إليها مباشرة؛ الفترة المعروضة معلّمة ✅.",
         ),
     ]
-    if not anchors:
+    if not periods:
         lines.extend(
             [
                 "",
@@ -457,13 +471,15 @@ def period_picker_text(ctx: FileListContext, anchors: Sequence[date]) -> str:
 
 
 def period_picker_kb(
-    ctx: FileListContext, anchors: Sequence[date]
+    ctx: FileListContext, periods: Sequence[tuple[date, int]]
 ) -> InlineKeyboardMarkup:
     """The period grid, two buttons a row, above a way back to the list."""
     builder = InlineKeyboardBuilder()
-    for anchor in anchors:
+    for anchor, count in periods:
         builder.button(
-            text=_period_option_label(ctx.period, anchor, active=anchor == ctx.anchor),
+            text=_period_option_label(
+                ctx.period, anchor, active=anchor == ctx.anchor, count=count
+            ),
             callback_data=FileListCB(
                 action="anchor",
                 view=ctx.view,
@@ -474,7 +490,7 @@ def period_picker_kb(
                 anchor=anchor.isoformat(),
             ).pack(),
         )
-    if anchors:
+    if periods:
         builder.adjust(2)
     builder.row(
         InlineKeyboardButton(
