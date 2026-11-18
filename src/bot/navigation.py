@@ -25,7 +25,7 @@ from aiogram.types import (
     Message,
 )
 
-from src.bot import library_views, views
+from src.bot import library_views, search_view, views
 from src.bot.keyboards import (
     FolderCB,
     back_to_menu_kb,
@@ -44,11 +44,10 @@ from src.bot.keyboards import (
     permissions_kb,
     pick_folder_kb,
     saved_nav_kb,
-    search_list_kb,
-    search_prompt_kb,
     settings_kb,
     status_kb,
 )
+from src.bot.states import SearchStates
 from src.bot.status import group_permissions_text, statistics_text, status_text
 from src.core.i18n import get_language, pick
 from src.services.container import Services
@@ -214,20 +213,27 @@ async def build(
     if kind == "new_folder":
         return views.new_folder_text(), back_to_menu_kb()
 
-    if kind == "search_prompt":
-        return views.search_prompt_text(), search_prompt_kb()
-
     if kind == "search":
-        query = str(screen.get("q") or "")
-        results = await services.files.search(query)
-        per_page = FILES_PER_PAGE
-        pages = max(1, -(-len(results) // per_page))
-        page = min(_page(screen), pages)
-        start = (page - 1) * per_page
-        items = results[start : start + per_page]
+        # «🔍 Search» is «History uploads» with a query on top: the period, the
+        # eight-file slice, the page turns and the date jumps are the same, and the
+        # typed text only narrows the very same history. Folders are searched by
+        # name beside it, so both are found from one screen.
+        query = " ".join(str(screen.get("q") or "").split())
+        page = await services.files.history_page(
+            str(screen.get("f") or "all"),
+            screen.get("d"),
+            page=_page(screen),
+            query=query or None,
+        )
+        folders: list = []
+        folder_total = 0
+        if query:
+            folders, folder_total = await services.files.search_folders(
+                query, int(screen.get("u") or 0)
+            )
         return (
-            views.search_results_text(items, query, page, pages, total=len(results)),
-            search_list_kb(items, page, pages),
+            search_view.search_text(page, query, folder_total),
+            search_view.search_kb(page, folders, query=query),
         )
 
     if kind == "settings":
@@ -347,6 +353,24 @@ async def _render(
     return notice or text, markup or keyboard
 
 
+async def _sync_typing(state: FSMContext, screen: dict[str, object]) -> None:
+    """Keep accepting a typed message exactly while «🔍 Search» is on screen.
+
+    Search has no separate prompt: the history screen itself listens for text. The
+    state is dropped as soon as another screen is rendered, so typing anywhere else
+    keeps doing whatever that screen expects.
+    """
+    if screen.get("k") == "search":
+        await state.set_state(SearchStates.waiting_query)
+        return
+    try:
+        current = await state.get_state()
+    except AttributeError:  # a plain dict in the tests
+        return
+    if current == SearchStates.waiting_query.state:
+        await state.set_state(None)
+
+
 async def navigate_message(
     message: Message,
     state: FSMContext,
@@ -362,6 +386,7 @@ async def navigate_message(
         await _push_current(state)
     text, keyboard = await _render(services, screen, notice, markup)
     await state.update_data(screen_key=dict(screen))
+    await _sync_typing(state, screen)
     await views.set_screen(bot, message, state, text, keyboard)
 
 
@@ -380,6 +405,7 @@ async def navigate_callback(
         await _push_current(state)
     text, keyboard = await _render(services, screen, notice, markup)
     await state.update_data(screen_key=dict(screen))
+    await _sync_typing(state, screen)
     await views.set_screen_cb(callback, state, text, keyboard)
 
 
@@ -439,4 +465,5 @@ async def go_back(
 
     text, keyboard = await build(services, target)
     await state.update_data(screen_key=dict(target))
+    await _sync_typing(state, target)
     await views.set_screen_cb(callback, state, text, keyboard)
