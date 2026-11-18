@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Mapping
 
 import httpx
@@ -244,6 +244,40 @@ class FileRepository:
             except (KeyError, ValueError):
                 continue
         return dates
+
+    async def period_counts(
+        self,
+        *,
+        span: str = "day",
+        query: str | None = None,
+        category: FileCategory | None = None,
+        limit: int = 24,
+    ) -> list[tuple[date, int]]:
+        """The periods that hold a file and how many, newest first, in one query.
+
+        The grouping and the counting happen inside Postgres (``files_periods``):
+        ``select date(created_at), count(*) ... group by date(created_at)`` for a
+        day, its week/month/year truncation otherwise. One request returns every
+        period with its own count, so the picker never reads the matching rows and
+        never asks the count of each period separately.
+        """
+        payload: dict[str, Any] = {
+            "p_span": span,
+            "p_query": _sanitize_query(query) if query else None,
+            "p_category": category.value if category is not None else None,
+            "p_limit": max(1, int(limit)),
+        }
+        response = await self._request(
+            "POST", path="rpc/files_periods", json=payload
+        )
+        periods: list[tuple[date, int]] = []
+        for row in self._rows(response):
+            try:
+                anchor = datetime.fromisoformat(str(row.get("anchor"))).date()
+            except (TypeError, ValueError):
+                continue
+            periods.append((anchor, int(row.get("files") or 0)))
+        return periods
 
     async def count(self, *, category: FileCategory | None = None) -> int:
         params: dict[str, str] = {"select": "id", "limit": "1"}
