@@ -126,6 +126,17 @@ status screen, so «Back» returns there instead of jumping to the main menu. Th
 status screen itself keeps one line about the rights (all, some, or none); the
 per-group detail lives only in «🛡 Group permissions».
 
+## Search and history
+
+«🔍 Search» is not a second browser: it opens the upload history itself — the
+period filters (today, this week, this month, this year, all time), eight files per
+page, «Next ▶» inside the period and «Next Day/Week/Month ⏭» at its end, jumping
+to the nearest day that actually holds files. What it adds is the text box:
+anything typed there narrows that same history to the files whose names match,
+while the user's folders whose names match are offered under the file buttons.
+«✖️ Clear search» puts the plain history back without leaving the screen, and
+«📂 History uploads» in the library is the same screen without the text field.
+
 ## Languages
 
 Every screen exists in English and in Arabic, chosen from «⚙️ Settings» →
@@ -151,7 +162,8 @@ done by PostgREST, so the sort covers every file in the category and the last fi
 of the library is reachable. The page lives in the screen key (`p`) next to the
 ordering, so opening a file and going back returns to the same page; changing the
 ordering restarts at page one because the pages are renumbered. Folder files,
-search results and «History uploads» are paged at eight files too; a folder is
+«🔍 Search» (which is «History uploads» plus a query) are paged at eight files
+too; a folder is
 sorted in memory (names are compared without Arabic diacritics and with the
 alef/ya variants folded) and then sliced, so its page turns keep the ordering.
 Folder listings are short enough to be sorted in memory as well.
