@@ -20,6 +20,7 @@ typed button in either language.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,6 +32,9 @@ from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 from src.utils.sorting import SortDirection, SortField, SortSpec
+
+if TYPE_CHECKING:
+    from src.services.files import HistoryPage
 
 _MAX_BUTTON_TEXT = 55
 
@@ -169,10 +173,17 @@ class SavedCB(CallbackData, prefix="svd"):
 
 
 class HistoryCB(CallbackData, prefix="hist"):
-    """«History uploads»: pick a category, a date window or another page."""
+    """«History uploads»: the period, its anchor day and the page to show.
+
+    Every button carries the full position, so a tap never depends on the screen
+    the chat happens to be on: ``action`` is what the tap does, ``filter_type``
+    the period, ``target_date`` its anchor day and ``page_number`` the offset.
+    """
 
     action: str
-    value: str = ""
+    filter_type: str = ""
+    target_date: str = ""
+    page_number: int = 1
 
 
 class SortCB(CallbackData, prefix="srt"):
@@ -845,70 +856,114 @@ def search_prompt_kb() -> InlineKeyboardMarkup:
 # --------------------------------------------------------------------------- #
 # History uploads
 # --------------------------------------------------------------------------- #
-def history_kb(
-    files: Sequence[StoredFile],
-    category: FileCategory | None = None,
-    span: str = "all",
-    page: int = 1,
-    total_pages: int = 1,
-) -> InlineKeyboardMarkup:
-    """The archive: a category row, a date-window row, the files, then the pages."""
+def history_file_label(file: StoredFile) -> str:
+    """One file button: its name, its size and the time it was uploaded."""
+    return _short(
+        f"📄 {file.file_name} - {file.size_human} - {file.created_at:%H:%M}",
+        _MAX_BUTTON_TEXT,
+    )
+
+
+def _history_jump_label(span: str, *, older: bool) -> str:
+    """«Next Day ⏭️» and friends, matching the active period filter."""
+    labels = {
+        "day": ("Next Day ⏭️", "اليوم التالي ⏭️", "Previous Day ⏮️", "اليوم السابق ⏮️"),
+        "week": ("Next Week ⏭️", "الأسبوع التالي ⏭️", "Previous Week ⏮️", "الأسبوع السابق ⏮️"),
+        "month": ("Next Month ⏭️", "الشهر التالي ⏭️", "Previous Month ⏮️", "الشهر السابق ⏮️"),
+        "year": ("Next Year ⏭️", "السنة التالية ⏭️", "Previous Year ⏮️", "السنة السابقة ⏮️"),
+    }.get(span, ("Next ▶️", "التالي ▶️", "⏮️ Previous", "⏮️ السابق"))
+    index = 0 if older else 2
+    return pick(labels[index], labels[index + 1])
+
+
+def history_kb(page: HistoryPage) -> InlineKeyboardMarkup:
+    """Filters first, then up to eight files, the navigation, and Back / Main menu.
+
+    Every button repeats the whole position (period, anchor day and page), so a
+    page turn keeps the filter and a jump changes only the anchor day. The jump
+    buttons appear only when the period has no page left: the day they lead to
+    comes from the database, never from adding or subtracting one day.
+    """
     builder = InlineKeyboardBuilder()
 
-    choices: list[tuple[FileCategory | None, str]] = [
-        (None, pick("🗂 All files", "🗂 كل الملفات"))
-    ]
-    choices += [(item, views.category_label(item)) for item in views.CATEGORY_ORDER]
-    category_buttons = [
+    filter_buttons = [
         InlineKeyboardButton(
-            text=f"{'✅ ' if item is category else ''}{label}",
+            text=f"{'✅ ' if span == page.span else ''}"
+            f"{library_views.history_span_label(span)}",
             callback_data=HistoryCB(
-                action="cat", value=item.value if item is not None else "all"
+                action="filter",
+                filter_type=span,
+                target_date=page.anchor.isoformat(),
+                page_number=1,
             ).pack(),
         )
-        for item, label in choices
+        for span in library_views.HISTORY_SPANS
     ]
-    # Two buttons per row, without mixing the two filter groups together.
-    for start in range(0, len(category_buttons), 2):
-        builder.row(*category_buttons[start : start + 2])
+    # The filters stay one group on top, split 3 + 2 so the labels stay readable.
+    builder.row(*filter_buttons[:3])
+    builder.row(*filter_buttons[3:])
 
-    current = str(span or "all")
-    span_buttons = [
-        InlineKeyboardButton(
-            text=f"{'✅ ' if value == current else ''}{library_views.history_span_label(value)}",
-            callback_data=HistoryCB(action="span", value=value).pack(),
-        )
-        for value in library_views.HISTORY_SPANS
-    ]
-    for start in range(0, len(span_buttons), 2):
-        builder.row(*span_buttons[start : start + 2])
-
-    for file in files:
+    for file in page.files:
         builder.row(
             InlineKeyboardButton(
-                text=f"📄 {_short(file.file_name, 45)}",
+                text=history_file_label(file),
                 callback_data=FileCB(action="view", file_id=file.id).pack(),
             )
         )
 
-    if total_pages > 1:
-        controls: list[InlineKeyboardButton] = []
-        if page > 1:
-            controls.append(
-                InlineKeyboardButton(
-                    text=pick("◀ Previous", "◀ السابق"),
-                    callback_data=HistoryCB(action="page", value=str(page - 1)).pack(),
-                )
+    controls: list[InlineKeyboardButton] = []
+    if page.newer_page is not None:
+        controls.append(
+            InlineKeyboardButton(
+                text=pick("◀ Previous page", "◀ الصفحة السابقة"),
+                callback_data=HistoryCB(
+                    action="page",
+                    filter_type=page.span,
+                    target_date=page.anchor.isoformat(),
+                    page_number=page.newer_page,
+                ).pack(),
             )
-        if page < total_pages:
-            controls.append(
-                InlineKeyboardButton(
-                    text=pick("Next ▶", "التالي ▶"),
-                    callback_data=HistoryCB(action="page", value=str(page + 1)).pack(),
-                )
+        )
+    elif page.prev_anchor is not None:
+        controls.append(
+            InlineKeyboardButton(
+                text=_history_jump_label(page.span, older=False),
+                callback_data=HistoryCB(
+                    action="jump",
+                    filter_type=page.span,
+                    target_date=page.prev_anchor.isoformat(),
+                    page_number=1,
+                ).pack(),
             )
-        if controls:
-            builder.row(*controls)
+        )
+
+    if page.older_page is not None:
+        controls.append(
+            InlineKeyboardButton(
+                text=pick("Next ▶️", "التالي ▶️"),
+                callback_data=HistoryCB(
+                    action="page",
+                    filter_type=page.span,
+                    target_date=page.anchor.isoformat(),
+                    page_number=page.older_page,
+                ).pack(),
+            )
+        )
+    elif page.next_anchor is not None:
+        controls.append(
+            InlineKeyboardButton(
+                text=_history_jump_label(page.span, older=True),
+                callback_data=HistoryCB(
+                    action="jump",
+                    filter_type=page.span,
+                    target_date=page.next_anchor.isoformat(),
+                    page_number=1,
+                ).pack(),
+            )
+        )
+
+    if controls:
+        builder.row(*controls)
 
     builder.row(*nav_row())
     return builder.as_markup()
