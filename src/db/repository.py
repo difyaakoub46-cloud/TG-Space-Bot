@@ -210,6 +210,41 @@ class FileRepository:
         total = _parse_total(response.headers.get("content-range"))
         return [StoredFile.from_row(row) for row in self._rows(response)], total
 
+    async def created_dates(
+        self,
+        *,
+        query: str | None = None,
+        category: FileCategory | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[datetime]:
+        """The ``created_at`` of the newest rows, for the period picker.
+
+        Only the date column travels, newest first: PostgREST has no ``DISTINCT``,
+        so the picker folds these days into periods itself.
+        """
+        params: dict[str, str] = {
+            "select": "created_at",
+            "order": "created_at.desc",
+            "limit": str(limit),
+            "offset": str(offset),
+        }
+        if category is not None:
+            params["category"] = f"eq.{category.value}"
+        if query:
+            cleaned = _sanitize_query(query)
+            if cleaned:
+                params["file_name"] = f"ilike.*{cleaned}*"
+
+        response = await self._request("GET", params=params)
+        dates: list[datetime] = []
+        for row in self._rows(response):
+            try:
+                dates.append(datetime.fromisoformat(str(row["created_at"])))
+            except (KeyError, ValueError):
+                continue
+        return dates
+
     async def count(self, *, category: FileCategory | None = None) -> int:
         params: dict[str, str] = {"select": "id", "limit": "1"}
         if category is not None:
