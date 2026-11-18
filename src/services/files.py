@@ -39,8 +39,9 @@ HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 # The two ways into the shared file list: a typed query or a library category.
 LIST_VIEWS: tuple[str, ...] = ("search", "category")
 
-# The period picker reads the newest dates in pages of this size, and never scans
-# more than ``_DATES_SCAN`` rows looking for enough distinct periods.
+# The fallback of the period picker (when the ``files_periods`` function has not
+# been installed yet) reads the newest dates in pages of this size, and never
+# scans more than ``_DATES_SCAN`` rows looking for enough distinct periods.
 _DATES_BATCH = 200
 _DATES_SCAN = 1000
 
@@ -612,14 +613,15 @@ class FileStorageServices:
         *,
         span: str = "day",
         limit: int = 24,
-    ) -> list[date]:
-        """The anchors of the most recent periods that hold a file, newest first.
+    ) -> list[tuple[date, int]]:
+        """The periods that hold a file, with how many, newest first.
 
-        This feeds the picker a filter opens on its second tap. PostgREST has no
-        ``SELECT DISTINCT``, so the dates are read a page of rows at a time (the
-        ``created_at`` column only) and folded into periods here; the scan stops as
-        soon as enough periods are known, so a busy day costs no extra query. The
-        view's own filter is applied, so the picker never offers an empty period.
+        This feeds the picker a filter opens on its second tap. The grouping and
+        the counting are done by Postgres in a single request (``files_periods``:
+        ``date(created_at)`` and ``count(*)`` grouped by it, or by its
+        week/month/year truncation), so the picker neither reads the matching rows
+        nor asks the count of each period separately. The view's own filter is
+        applied, so the picker never offers an empty period.
         """
         view = str(view or "search")
         view = view if view in LIST_VIEWS else "search"
@@ -631,7 +633,28 @@ class FileStorageServices:
         query = value if view == "search" and value else None
         category = parse_category(value) if view == "category" and value else None
 
-        seen: dict[tuple[int, ...], date] = {}
+        try:
+            return await self._repository.period_counts(
+                span=span, query=query, category=category, limit=limit
+            )
+        except SupabaseError:
+            # The SQL function is not installed yet: fold the dates here instead, so
+            # the picker keeps working (its counts then cover the scanned window).
+            logger.warning(
+                "files_periods is unavailable; folding the dates in the bot",
+                exc_info=True,
+            )
+        return await self._folded_period_counts(query, category, span, limit)
+
+    async def _folded_period_counts(
+        self,
+        query: str | None,
+        category: FileCategory | None,
+        span: str,
+        limit: int,
+    ) -> list[tuple[date, int]]:
+        """Periods and their counts, folded from the newest ``created_at`` values."""
+        seen: dict[tuple[int, ...], list] = {}
         offset = 0
         while len(seen) < limit and offset < _DATES_SCAN:
             dates = await self._repository.created_dates(
@@ -640,9 +663,12 @@ class FileStorageServices:
             if not dates:
                 break
             for moment in dates:
-                seen.setdefault(_period_key(moment.date(), span), moment.date())
+                start, _end = history_window(span, moment.date())
+                anchor = start.date() if start is not None else moment.date()
+                bucket = seen.setdefault(_period_key(moment.date(), span), [anchor, 0])
+                bucket[1] += 1
             offset += _DATES_BATCH
-        return list(seen.values())[:limit]
+        return [(anchor, count) for anchor, count in list(seen.values())[:limit]]
 
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
