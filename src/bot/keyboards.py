@@ -660,6 +660,7 @@ def folder_files_kb(
                     ).pack(),
                 ),
             )
+        # The two folder actions share one row, so the panel stays compact.
         builder.row(
             InlineKeyboardButton(
                 text=(
@@ -671,13 +672,11 @@ def folder_files_kb(
                     action="unfavorite" if favorite else "favorite",
                     value=folder_id,
                 ).pack(),
-            )
-        )
-        builder.row(
+            ),
             InlineKeyboardButton(
                 text=pick("🗑 Delete the folder", "🗑 حذف المجلد"),
                 callback_data=FolderCB(action="delete", value=folder_id).pack(),
-            )
+            ),
         )
     builder.row(*nav_row())
     return builder.as_markup()
