@@ -74,6 +74,45 @@ class SortSpec:
         return {"s": self.field.value, "d": self.direction.value}
 
 
+# The six orderings of the shared file list, as they travel in callback data.
+SORT_KEYS: tuple[str, ...] = (
+    "newest",
+    "oldest",
+    "size_asc",
+    "size_desc",
+    "name_asc",
+    "name_desc",
+)
+
+_SORT_SPECS: dict[str, SortSpec] = {
+    "newest": SortSpec(SortField.date, SortDirection.desc),
+    "oldest": SortSpec(SortField.date, SortDirection.asc),
+    "size_asc": SortSpec(SortField.size, SortDirection.asc),
+    "size_desc": SortSpec(SortField.size, SortDirection.desc),
+    "name_asc": SortSpec(SortField.name, SortDirection.asc),
+    "name_desc": SortSpec(SortField.name, SortDirection.desc),
+}
+
+
+def normalise_sort(value: Any) -> str:
+    """A sort key that is safe to put in a screen or a callback."""
+    key = str(value or "").strip().lower()
+    return key if key in _SORT_SPECS else SORT_KEYS[0]
+
+
+def sort_from_key(key: Any) -> SortSpec:
+    """The ordering a short sort key stands for (newest first by default)."""
+    return _SORT_SPECS[normalise_sort(key)]
+
+
+def sort_key(spec: SortSpec) -> str:
+    """The short key of an ordering, for a screen or a callback."""
+    for key, candidate in _SORT_SPECS.items():
+        if candidate == spec:
+            return key
+    return SORT_KEYS[0]
+
+
 def sort_files(files: Iterable[StoredFile], spec: SortSpec) -> list[StoredFile]:
     """Order files by name, size or date, ascending or descending."""
     if spec.field is SortField.size:
@@ -96,10 +135,14 @@ def database_order(spec: SortSpec) -> str:
 
 
 __all__ = [
+    "SORT_KEYS",
     "SortDirection",
     "SortField",
     "SortSpec",
     "database_order",
     "name_key",
+    "normalise_sort",
     "sort_files",
+    "sort_from_key",
+    "sort_key",
 ]
