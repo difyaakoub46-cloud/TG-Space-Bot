@@ -1,8 +1,8 @@
-"""The shared file-list router: filters, page turns, days jumps and sorting.
+"""The shared file-list router: filters, page turns, period jumps and sorting.
 
 Every button of the component carries its whole context, so this handler never
-guesses: it applies what the tap changes (a filter, a page, a day or an ordering),
-keeps the rest, and renders the list again in place.
+guesses: it applies what the tap changes (a filter, a page, a period or an
+ordering), keeps the rest, and renders the list again in place.
 """
 
 from __future__ import annotations
@@ -51,6 +51,34 @@ async def file_list_callback(
     ctx = await _context(callback, state, data)
     base = dict((await state.get_data()).get("screen_key") or {})
     base.setdefault("u", int(callback.from_user.id))
+    shown = FileListContext.from_screen(base)
+
+    if data.action == "noop":
+        # An inert button (Previous on page one, Next on the last page): it is in
+        # the row for the layout, not to do anything.
+        await callback.answer()
+        return
+
+    if (
+        data.action == "filter"
+        and data.period == shown.period
+        and data.period != "all"
+    ):
+        # The same filter tapped twice asks for a date, not for the same page.
+        anchors = await services.files.available_periods(
+            ctx.view, ctx.value, span=ctx.period
+        )
+        await navigation.navigate_callback(
+            callback,
+            state,
+            bot,
+            services,
+            ctx.to_screen(base),
+            notice=file_list.period_picker_text(ctx, anchors),
+            markup=file_list.period_picker_kb(ctx, anchors),
+            push=False,
+        )
+        return
 
     if data.action == "sort":
         # The ordering panel sits on top of the same list, without losing its place.
