@@ -249,8 +249,10 @@ def saved_screen_label(show: bool = True) -> str:
     )
 
 
-def settings_kb(show_saved: bool = True) -> InlineKeyboardMarkup:
-    """Settings: language, the saved-file card, the group gate and help."""
+def settings_kb(
+    show_saved: bool = True, keep_sent: bool = False
+) -> InlineKeyboardMarkup:
+    """Settings: language, both screen toggles, the group gate and help."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -261,6 +263,12 @@ def settings_kb(show_saved: bool = True) -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text=saved_screen_label(show_saved),
             callback_data=MenuCB(action="toggle_saved").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=library_views.keep_sent_label(keep_sent),
+            callback_data=MenuCB(action="toggle_keep_sent").pack(),
         )
     )
     builder.row(
