@@ -65,7 +65,7 @@ async def file_list_callback(
         and data.period != "all"
     ):
         # The same filter tapped twice asks for a date, not for the same page.
-        anchors = await services.files.available_periods(
+        periods = await services.files.available_periods(
             ctx.view, ctx.value, span=ctx.period
         )
         await navigation.navigate_callback(
@@ -74,8 +74,8 @@ async def file_list_callback(
             bot,
             services,
             ctx.to_screen(base),
-            notice=file_list.period_picker_text(ctx, anchors),
-            markup=file_list.period_picker_kb(ctx, anchors),
+            notice=file_list.period_picker_text(ctx, periods),
+            markup=file_list.period_picker_kb(ctx, periods),
             push=False,
         )
         return

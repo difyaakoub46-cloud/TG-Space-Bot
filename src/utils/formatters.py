@@ -8,6 +8,27 @@ from datetime import datetime, timezone
 # is translated, so a size reads the same wherever it appears.
 _UNITS = ("B", "KB", "MB", "GB", "TB")
 
+# A file button keeps one line: a long name is cut in the middle instead of being
+# wrapped by Telegram, so every row of the panel has the same height.
+NAME_HEAD = 12
+NAME_TAIL = 8
+
+
+def truncate_name(
+    name: object, head: int = NAME_HEAD, tail: int = NAME_TAIL
+) -> str:
+    """The first ``head`` and the last ``tail`` characters of a file name.
+
+    ``tg-space-bot-deploy-7e9a560-2026-11-15-1432.log`` becomes
+    ``tg-space-bot...1432.log``: the beginning still names the file and the end
+    still gives its extension, while the label never grows past a single line.
+    A name short enough to fit is returned unchanged.
+    """
+    text = " ".join(str(name or "").split())
+    if len(text) <= head + tail + 3:
+        return text
+    return f"{text[:head]}...{text[-tail:]}"
+
 
 def format_number(n: int) -> str:
     return f"{n:,}"
