@@ -29,7 +29,7 @@ from src.bot import library_views, views
 from src.core.i18n import Language, pick
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number
+from src.utils.formatters import format_number, truncate_name
 from src.utils.sorting import SortDirection, SortField, SortSpec
 
 _MAX_BUTTON_TEXT = 55
@@ -632,7 +632,12 @@ def folder_files_kb(
     builder = InlineKeyboardBuilder()
     for file in files:
         builder.button(
-            text=_short(file.file_name),
+            # The same label as the shared file list: name, size and time, with the
+            # name cut in the middle so the button never wraps.
+            text=(
+                f"📄 {truncate_name(file.file_name)} - {file.size_human} - "
+                f"{file.created_at:%H:%M}"
+            ),
             callback_data=FileCB(action="view", file_id=file.id).pack(),
         )
     builder.adjust(1)
