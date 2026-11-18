@@ -362,6 +362,16 @@ async def navigate_callback(
     await views.set_screen_cb(callback, state, text, keyboard)
 
 
+async def forget(state: FSMContext, *message_ids: int) -> None:
+    """Stop tracking messages that have just been deleted."""
+    ids = {int(mid) for mid in message_ids if mid}
+    if not ids:
+        return
+    data = await state.get_data()
+    tracked = [int(mid) for mid in (data.get("cleanup_ids") or []) if mid]
+    await state.update_data(cleanup_ids=[mid for mid in tracked if mid not in ids])
+
+
 async def track_delivered(state: FSMContext, message_id: int) -> None:
     """Remember a copy sent from a file screen, so «↩️ Back» can remove it."""
     if not message_id:

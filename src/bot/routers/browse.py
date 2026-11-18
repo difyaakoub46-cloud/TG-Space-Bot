@@ -25,6 +25,7 @@ from src.bot.states import RenameStates
 from src.core.i18n import pick
 from src.services.container import Services
 from src.utils.filetypes import parse_category
+from src.utils.formatters import keep_extension
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,9 @@ async def file_rename_callback(
         await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await state.set_state(RenameStates.waiting_name)
-    await state.update_data(rename_file_id=record.id)
+    await state.update_data(
+        rename_file_id=record.id, rename_old_name=record.file_name
+    )
     await navigation.navigate_callback(
         callback,
         state,
@@ -196,8 +199,12 @@ async def rename_message(
     message: Message, services: Services, state: FSMContext, bot
 ) -> None:
     name = " ".join((message.text or "").split())
-    await views.remember(state, message.message_id)
+    stored = await state.get_data()
+    # Renaming must not change the type of the file: «Noma» becomes «Noma.pdf».
+    if name:
+        name = keep_extension(name, str(stored.get("rename_old_name") or ""))
     if not name or len(name) > 120:
+        await views.remember(state, message.message_id)
         await message.answer(
             pick(
                 "⚠️ Send a name between 1 and 120 characters.",
@@ -206,11 +213,11 @@ async def rename_message(
         )
         return
 
-    stored = await state.get_data()
     file_id = str(stored.get("rename_file_id") or "")
     await state.set_state(None)
     updated = await services.files.rename(file_id, name) if file_id else None
     if updated is None:
+        await views.remember(state, message.message_id)
         await message.answer(
             pick(
                 "⚠️ Could not update the name, please try again.",
@@ -218,6 +225,11 @@ async def rename_message(
             )
         )
         return
+
+    # The new name has been consumed: remove the user's text message so the chat
+    # keeps only the file card.
+    await views.delete_screen_message(bot, message.chat.id, message.message_id)
+    await navigation.forget(state, message.message_id)
 
     await navigation.navigate_message(
         message,
