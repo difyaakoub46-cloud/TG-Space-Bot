@@ -11,6 +11,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 
 from src.core.i18n import Language, pick, reset_language, set_language
@@ -70,6 +71,29 @@ class AccessMiddleware(BaseMiddleware):
             reset_language()
 
 
+class AckMiddleware(BaseMiddleware):
+    """Stop the button spinner before the screen starts being fetched.
+
+    Telegram keeps a pressed button "loading" until its callback query is
+    acknowledged, and the handlers acknowledged only after their queries had run:
+    that is why a tap looked frozen for seconds. This answers first; any text a
+    handler wants to show later is delivered through :func:`src.bot.views.ack`.
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[..., Awaitable[Any]],
+        event: Message | CallbackQuery,
+        data: Dict[str, Any],
+    ) -> Any:
+        if isinstance(event, CallbackQuery):
+            try:
+                await event.answer()
+            except TelegramAPIError:
+                logger.debug("Could not acknowledge the callback query", exc_info=True)
+        return await handler(event, data)
+
+
 class ContextMiddleware(BaseMiddleware):
     """Inject the services, the settings and the bot into every handler."""
 
@@ -97,4 +121,10 @@ class ContextMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-__all__ = ["AccessMiddleware", "ContextMiddleware", "Language", "denied_text"]
+__all__ = [
+    "AccessMiddleware",
+    "AckMiddleware",
+    "ContextMiddleware",
+    "Language",
+    "denied_text",
+]

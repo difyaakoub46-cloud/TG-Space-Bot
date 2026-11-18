@@ -13,6 +13,7 @@ missing right per group.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import time
@@ -232,36 +233,52 @@ def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
     return "\n".join(lines)
 
 
-async def statistics_text(services: Services) -> str:
-    """The «Statistics» screen: the counts next to the group holding each category."""
+async def _storage_checks(services: Services) -> list[StorageChatCheck]:
+    """The storage checks, or an empty list when they cannot be read.
+
+    The answer is reused for a few seconds by :class:`StorageService`, so opening
+    these screens again does not re-ask Telegram about every group.
+    """
     try:
-        checks = await services.storage.check_chats()
+        return await services.storage.check_chats()
     except Exception:  # noqa: BLE001 - the screen must still render
         logger.exception("Could not verify the storage groups")
-        checks = []
-    return views.stats_text(await services.files.stats(), checks)
+        return []
+
+
+async def statistics_text(services: Services) -> str:
+    """The «Statistics» screen: the counts next to the group holding each category."""
+    # The totals and the group check are independent: one wait instead of two.
+    stats, checks = await asyncio.gather(
+        services.files.stats(), _storage_checks(services)
+    )
+    return views.stats_text(stats, checks)
 
 
 async def group_permissions_text(services: Services) -> str:
     """The «Group permissions» screen, re-reading the groups before listing them."""
-    try:
-        checks = await services.storage.check_chats()
-    except Exception:  # noqa: BLE001 - the screen must still render
-        logger.exception("Could not verify the storage groups")
-        checks = []
-    return permissions_text(checks)
+    return permissions_text(await _storage_checks(services))
+
+
+# The bot's own account never changes while it runs, so it is asked for once.
+_IDENTITY_CACHE: dict[int, str] = {}
 
 
 async def _bot_identity(bot) -> str:
     if bot is None:
         return pick("unavailable", "غير متاح")
+    cached = _IDENTITY_CACHE.get(id(bot))
+    if cached is not None:
+        return cached
     try:
         me = await bot.get_me()
     except TelegramAPIError:
         logger.warning("Could not read the bot identity", exc_info=True)
         return pick("could not reach Telegram", "تعذّر الاتصال بتيليغرام")
     handle = f"@{me.username}" if me.username else me.full_name
-    return f"{_escape(handle)} · <code>{me.id}</code>"
+    text = f"{_escape(handle)} · <code>{me.id}</code>"
+    _IDENTITY_CACHE[id(bot)] = text
+    return text
 
 
 async def status_text(
@@ -274,19 +291,19 @@ async def status_text(
     # «Statistics», so they are not shown here.
     started = time.perf_counter()
     try:
-        await services.files.stats()
+        if checks is None:
+            # The database latency and the group check are independent: one wait
+            # for both, and neither is repeated on the next tap.
+            _, checks = await asyncio.gather(
+                services.files.stats(), _storage_checks(services)
+            )
+        else:
+            await services.files.stats()
         database_error = None
     except (SupabaseError, OSError) as exc:
         database_error = str(exc)
     latency_ms = (time.perf_counter() - started) * 1000
-
-    if checks is None:
-        try:
-            checks = await services.storage.check_chats()
-        except Exception:  # noqa: BLE001 - the screen must still render
-            logger.exception("Could not verify the storage groups")
-            checks = []
-    checks = list(checks)
+    checks = list(checks or ())
 
     configured = settings.storage_chats()
     fallback = settings.storage_chat_fallback

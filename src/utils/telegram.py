@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar
 
 from aiogram import Bot
@@ -84,6 +84,35 @@ async def safe_delete_message(
             exc,
         )
         return False
+
+
+async def safe_delete_messages(
+    bot: Bot,
+    chat_id: int,
+    message_ids: Sequence[int],
+) -> bool:
+    """Delete several messages in one request, falling back to one by one.
+
+    An upload used to pay a Telegram call per message it cleaned up; the batch is
+    deleted as a whole, and a mixed batch (one message already gone) is retried
+    individually rather than reported as a failure.
+    """
+    ids = [int(message_id) for message_id in message_ids if message_id]
+    if not ids:
+        return True
+    if len(ids) == 1:
+        return await safe_delete_message(bot, chat_id, ids[0])
+    try:
+        await bot.delete_messages(chat_id=chat_id, message_ids=ids)
+        return True
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Could not delete messages %s in chat %s: %s", ids, chat_id, exc
+        )
+    removed = True
+    for message_id in ids:
+        removed = await safe_delete_message(bot, chat_id, message_id) and removed
+    return removed
 
 
 async def answer_or_edit(

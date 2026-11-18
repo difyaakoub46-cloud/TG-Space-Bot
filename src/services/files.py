@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from aiogram.types import Message
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
 from src.db.repository import FileRepository, SupabaseError
+from src.services.cache import TTLCache
 from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
@@ -34,6 +36,10 @@ DEFAULT_SEARCH_LIMIT = 100
 # One screen of a file list, everywhere: a category, a folder and the shared
 # list all show eight files at most.
 FILES_PER_PAGE = 8
+
+# How long a screen may reuse the library totals and the folder list. Every write
+# path clears the cache, so a new upload or a deleted file is visible immediately.
+CACHE_TTL_SECONDS = 30.0
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
 # The two ways into the shared file list: a typed query or a library category.
@@ -189,6 +195,11 @@ class FileStorageServices:
         self._storage = storage
         self._bot = bot
         self._pending = pending
+        # Library totals, category totals and the folders of each user only change
+        # on a write, so a screen may reuse them for a few seconds.
+        self._cache = TTLCache(CACHE_TTL_SECONDS)
+        # Running background fingerprints; referenced so the loop keeps them alive.
+        self._hash_tasks: set[asyncio.Task] = set()
 
     def bind_bot(self, bot: Bot) -> None:
         """The bot is needed to read a file's bytes when fingerprinting it."""
@@ -239,6 +250,38 @@ class FileStorageServices:
         data = buffer.getvalue()
         return hashlib.sha256(data).hexdigest() if data else None
 
+    def _invalidate_catalog(self) -> None:
+        """Drop the cached library totals and folder lists after a write."""
+        self._cache.clear()
+
+    def _schedule_hash(self, record: StoredFile, candidate: FileCandidate) -> None:
+        """Fingerprint a stored file afterwards, never before it is copied.
+
+        Reading the bytes to hash them downloaded the whole file a second time, so
+        every upload waited for the size of the file (and a batch waited for all of
+        them). The download now runs as its own task: it never delays the reply,
+        and a failure only leaves the row without a fingerprint.
+        """
+        if self._bot is None or not candidate.file_id:
+            return
+        if candidate.file_size and candidate.file_size > self._settings.hash_max_bytes:
+            return
+        task = asyncio.create_task(self._store_hash(record, candidate))
+        self._hash_tasks.add(task)
+        task.add_done_callback(self._hash_tasks.discard)
+
+    async def _store_hash(self, record: StoredFile, candidate: FileCandidate) -> None:
+        try:
+            fingerprint = await self.content_hash(candidate)
+            if fingerprint:
+                await self._repository.set_content_hash(record.id, fingerprint)
+        except Exception:  # noqa: BLE001 - a fingerprint is best effort
+            logger.debug(
+                "Could not fingerprint %s in the background",
+                candidate.file_name,
+                exc_info=True,
+            )
+
     async def save_from_message(
         self, message: Message, candidate: FileCandidate
     ) -> StoredFile:
@@ -259,8 +302,10 @@ class FileStorageServices:
         if existing is not None:
             raise DuplicateFileError(existing)
 
-        fingerprint = await self.content_hash(candidate)
-
+        # The fingerprint is computed *after* the copy (see ``_schedule_hash``):
+        # reading the bytes here downloaded the file a second time and made every
+        # upload wait for its size. ``file_unique_id`` is what keeps one Telegram
+        # file from being stored twice.
         storage = self.storage
         chat_id, message_id = await storage.upload(message, candidate)
 
@@ -273,7 +318,7 @@ class FileStorageServices:
                 file_type=candidate.mime_type,
                 category=candidate.category.value,
                 file_size=candidate.file_size,
-                content_hash=fingerprint,
+                content_hash=None,
                 user_id=uploader_id,
                 chat_id=chat_id,
                 message_id=message_id,
@@ -303,6 +348,8 @@ class FileStorageServices:
             record.storage_message_id,
             f" hash={record.content_hash[:12]}" if record.content_hash else "",
         )
+        self._invalidate_catalog()
+        self._schedule_hash(record, candidate)
         return record
 
     async def _quarantine(
@@ -426,6 +473,8 @@ class FileStorageServices:
             report.failed,
             report.kept,
         )
+        if report.repaired:
+            self._invalidate_catalog()
         return report
 
     async def get(self, file_id: str) -> StoredFile | None:
@@ -553,21 +602,30 @@ class FileStorageServices:
                 order=order,
             )
 
-        files, total = await fetch(page)
-        pages = max(1, -(-total // per_page))
-        if not files and page > 1:
-            # The page came from an older screen (or a file was deleted): show the
-            # last page of the period instead of an empty one.
-            page = pages
-            files, total = await fetch(page)
+        async def fetch_page() -> tuple[list[StoredFile], int]:
+            """The page, falling back to the last one when the library shrank."""
+            nonlocal page
+            found, count = await fetch(page)
+            pages_total = max(1, -(-count // per_page))
+            if not found and page > 1:
+                # The page came from an older screen (or a file was deleted): show
+                # the last page of the period instead of an empty one.
+                page = pages_total
+                found, count = await fetch(page)
+            return found, count
 
         # The quick jump is offered on every page of a period, not only on its
-        # last one: it goes straight to the closest older period with files.
-        next_anchor: date | None = None
-        if start is not None:
-            next_anchor = await self._nearest_older_day(
-                start, query=query, category=category
+        # last one, and it does not depend on the page itself: both queries run
+        # together instead of one after the other.
+        if start is None:
+            files, total = await fetch_page()
+            next_anchor: date | None = None
+        else:
+            (files, total), next_anchor = await asyncio.gather(
+                fetch_page(),
+                self._nearest_older_day(start, query=query, category=category),
             )
+        pages = max(1, -(-total // per_page))
 
         return FileListPage(
             files=files,
@@ -675,14 +733,33 @@ class FileStorageServices:
 
     async def category_totals(self) -> dict[FileCategory, tuple[int, int]]:
         """Files and bytes per category (one round trip, thanks to the view)."""
-        return await self._repository.category_totals()
+        return await self._cache.get(
+            "category_totals", self._repository.category_totals
+        )
 
     async def stats(self) -> dict[str, Any]:
-        counts = await self.category_counts()
-        total_bytes = await self._repository.total_size()
+        """The library totals, reused for a moment by the next screen."""
+        return await self._cache.get("stats", self._load_stats)
+
+    async def _load_stats(self) -> dict[str, Any]:
+        """The whole library summary from one request.
+
+        It used to be six per-category counts plus a separate byte counter, which
+        is what made the main menu wait for two network round trips per tap.
+        """
+        totals = await self._repository.category_totals()
+        counts = {category: count for category, (count, _size) in totals.items()}
+        total_files = sum(counts.values())
+        total_bytes = sum(size for _count, size in totals.values())
+        if not total_bytes and total_files:
+            # The bytes view is not deployed yet: fall back to the live counter.
+            try:
+                total_bytes = await self._repository.total_size() or 0
+            except SupabaseError:
+                total_bytes = 0
         return {
-            "total": sum(counts.values()),
-            "total_bytes": total_bytes or 0,
+            "total": total_files,
+            "total_bytes": total_bytes,
             "categories": counts,
         }
 
@@ -699,7 +776,10 @@ class FileStorageServices:
 
     async def folders(self, user_id: int) -> list[Folder]:
         """Folders of one user, always in case-insensitive alphabetical order."""
-        return await self._repository.list_folders(user_id)
+        return await self._cache.get(
+            f"folders:{int(user_id)}",
+            lambda: self._repository.list_folders(user_id),
+        )
 
     async def search_folders(
         self, query: str, user_id: int, limit: int = FILES_PER_PAGE
@@ -748,6 +828,7 @@ class FileStorageServices:
         await self._repository.set_folder_favorite(
             folder_id, user_id, favorite, order
         )
+        self._cache.invalidate_prefix("folders:")
         return await self._repository.get_folder(folder_id, user_id)
 
     async def move_favorite(
@@ -767,10 +848,13 @@ class FileStorageServices:
         favorites[index], favorites[target] = favorites[target], favorites[index]
         for position, folder in enumerate(favorites):
             await self._repository.set_folder_order(folder.id, user_id, position)
+        self._cache.invalidate_prefix("folders:")
         return await self._repository.get_folder(folder_id, user_id)
 
     async def create_folder(self, user_id: int, name: str) -> Folder:
-        return await self._repository.create_folder(user_id, name)
+        folder = await self._repository.create_folder(user_id, name)
+        self._cache.invalidate_prefix("folders:")
+        return folder
 
     async def folder_files(
         self, folder_id: str, sort: SortSpec | None = None
@@ -781,10 +865,13 @@ class FileStorageServices:
 
     async def delete_folder(self, folder_id: str, user_id: int) -> bool:
         """Remove the folder label only: its files are kept in the library."""
-        return await self._repository.delete_folder(folder_id, user_id)
+        deleted = await self._repository.delete_folder(folder_id, user_id)
+        self._cache.invalidate_prefix("folders:")
+        return deleted
 
     async def add_to_folder(self, folder_id: str, file_id: str) -> None:
         await self._repository.add_to_folder(folder_id, file_id)
+        self._cache.invalidate_prefix("folders:")
 
     async def file_folders(self, file_id: str) -> list[str]:
         return await self._repository.folders_of_file(file_id)
@@ -795,6 +882,7 @@ class FileStorageServices:
         if record is None:
             return False
         await self.storage.remove(record.storage_chat_id, record.storage_message_id)
+        self._invalidate_catalog()
         return True
 
 

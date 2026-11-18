@@ -30,7 +30,7 @@ from src.services.container import Services
 from src.services.files import DuplicateFileError, QuarantinedFileError
 from src.services.pending import PendingFile
 from src.utils.filetypes import extract_candidate
-from src.utils.telegram import safe_delete_message, safe_edit_text
+from src.utils.telegram import safe_delete_messages, safe_edit_text
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +44,13 @@ SUPPORTED_MEDIA = (
 # of an album within milliseconds, but no update announces that the group is
 # complete; a selection of files the desktop client sends as separate messages
 # gets a shorter window so a single file is not kept waiting for long.
-ALBUM_WINDOW = 1.5
-SINGLE_WINDOW = 1.2
+ALBUM_WINDOW = 0.5
+SINGLE_WINDOW = 0.4
+
+# How many files of one batch are stored at the same time. The copies are
+# independent Telegram calls, so a small window keeps a batch fast without
+# running into the flood limits.
+UPLOAD_CONCURRENCY = 3
 
 # Uploads being collected: ``(chat_id, media_group_id or "single")`` → messages.
 _albums: dict[tuple[int, str], list[Message]] = {}
@@ -135,8 +140,9 @@ async def _handle_one(
     except QuarantinedFileError as exc:
         # The row could not be written: the file was held in the fallback group
         # instead of the library, and «🔧 إصلاح» will finish the job later.
-        await safe_delete_message(bot, message.chat.id, message.message_id)
-        await safe_delete_message(bot, status.chat.id, status.message_id)
+        await safe_delete_messages(
+            bot, message.chat.id, [message.message_id, status.message_id]
+        )
         await navigation.navigate_message(
             message,
             state,
@@ -152,8 +158,9 @@ async def _handle_one(
         return
     except DuplicateFileError as exc:
         # The same Telegram file is already stored: no second copy, just its page.
-        await safe_delete_message(bot, message.chat.id, message.message_id)
-        await safe_delete_message(bot, status.chat.id, status.message_id)
+        await safe_delete_messages(
+            bot, message.chat.id, [message.message_id, status.message_id]
+        )
         if not show_saved:
             return
         await navigation.navigate_message(
@@ -179,8 +186,9 @@ async def _handle_one(
     # The copy now lives in its storage group, so the original message and the
     # status bubble are removed. The result is rendered on the single persistent
     # screen instead, which keeps the chat free of one message per upload.
-    await safe_delete_message(bot, message.chat.id, message.message_id)
-    await safe_delete_message(bot, status.chat.id, status.message_id)
+    await safe_delete_messages(
+        bot, message.chat.id, [message.message_id, status.message_id]
+    )
 
     if not show_saved:
         return
@@ -196,18 +204,27 @@ async def _handle_one(
 
 
 async def _store(
-    message: Message, candidate, services: Services, batch: _Batch
-) -> None:
-    """Save one album item, recording how it ended instead of raising."""
-    try:
-        batch.saved.append(await services.files.save_from_message(message, candidate))
-    except QuarantinedFileError as exc:
-        batch.quarantined.append(exc.pending)
-    except DuplicateFileError as exc:
-        batch.duplicates.append(exc.record)
-    except Exception as exc:  # noqa: BLE001 - every failure must be reported
-        logger.exception("Failed to store %s", candidate.file_name)
-        batch.failures.append((candidate.file_name, _reason(exc)))
+    message: Message,
+    candidate,
+    services: Services,
+    limit: asyncio.Semaphore,
+) -> tuple[str, object]:
+    """Save one album item and say how it ended, instead of raising.
+
+    The outcome is returned rather than written into the batch, so several copies
+    can run at the same time and the batch is still reported in the order the
+    files arrived.
+    """
+    async with limit:
+        try:
+            return "saved", await services.files.save_from_message(message, candidate)
+        except QuarantinedFileError as exc:
+            return "quarantined", exc.pending
+        except DuplicateFileError as exc:
+            return "duplicate", exc.record
+        except Exception as exc:  # noqa: BLE001 - every failure must be reported
+            logger.exception("Failed to store %s", candidate.file_name)
+            return "failed", (candidate.file_name, _reason(exc))
 
 
 async def _handle_album(
@@ -226,28 +243,37 @@ async def _handle_album(
         )
     )
 
+    # The files of one batch are independent: store a few at a time instead of one
+    # after the other, and keep one status bubble for the whole batch.
     batch = _Batch()
-    done = 0
-    for message in messages:
-        candidate = extract_candidate(message)
-        if candidate is None:
-            continue
-        done += 1
-        if done > 1:
-            await safe_edit_text(
-                bot,
-                status.chat.id,
-                status.message_id,
-                pick(
-                    f"⏳ Moving file {done} of {total}…",
-                    f"⏳ نقل الملف {done} من {total}…",
-                ),
-            )
-        await _store(message, candidate, services, batch)
+    limit = asyncio.Semaphore(UPLOAD_CONCURRENCY)
+    candidates = [
+        (message, candidate)
+        for message in messages
+        if (candidate := extract_candidate(message)) is not None
+    ]
+    outcomes = await asyncio.gather(
+        *(
+            _store(message, candidate, services, limit)
+            for message, candidate in candidates
+        )
+    )
+    for kind, payload in outcomes:
+        if kind == "saved":
+            batch.saved.append(payload)  # type: ignore[arg-type]
+        elif kind == "quarantined":
+            batch.quarantined.append(payload)  # type: ignore[arg-type]
+        elif kind == "duplicate":
+            batch.duplicates.append(payload)  # type: ignore[arg-type]
+        else:
+            batch.failures.append(payload)  # type: ignore[arg-type]
 
-    for message in messages:
-        await safe_delete_message(bot, message.chat.id, message.message_id)
-    await safe_delete_message(bot, status.chat.id, status.message_id)
+    # One request for the whole batch instead of two per file.
+    await safe_delete_messages(
+        bot,
+        first.chat.id,
+        [message.message_id for message in messages] + [status.message_id],
+    )
 
     if batch.empty:
         return

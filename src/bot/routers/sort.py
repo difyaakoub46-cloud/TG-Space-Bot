@@ -41,7 +41,7 @@ async def sort_menu_callback(
     """Open the panel on top of the current list, without losing its place."""
     screen = await _current_screen(state)
     if screen is None:
-        await callback.answer(
+        await views.ack(callback,
             pick(
                 "Sorting is not available on this screen.",
                 "لا يمكن الفرز في هذه الشاشة.",
@@ -71,7 +71,7 @@ async def sort_set_callback(
     data = SortCB.unpack(callback.data)
     screen = await _current_screen(state)
     if screen is None:
-        await callback.answer(
+        await views.ack(callback,
             pick(
                 "Sorting is not available on this screen.",
                 "لا يمكن الفرز في هذه الشاشة.",
@@ -95,7 +95,7 @@ async def sort_close_callback(
     """Leave the panel and show the list with the ordering already chosen."""
     screen = await _current_screen(state)
     if screen is None:
-        await callback.answer()
+        await views.ack(callback)
         return
     await navigation.navigate_callback(
         callback, state, bot, services, screen, push=False

@@ -17,6 +17,7 @@ screen the chat happens to be on.
 
 from __future__ import annotations
 
+import asyncio
 import html
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -532,23 +533,33 @@ async def screen(services, screen: dict[str, object]) -> tuple[str, InlineKeyboa
     window, the ``ORDER BY`` and the eight-file ``LIMIT``/``OFFSET`` slice.
     """
     ctx = FileListContext.from_screen(screen)
-    page = await services.files.file_list_page(
-        ctx.view,
-        ctx.value,
-        span=ctx.period,
-        sort=ctx.sort,
-        anchor=ctx.anchor,
-        page=ctx.page,
-    )
-    # A clamped page or a normalised filter must be what the next tap carries.
-    ctx = replace(ctx, page=page.page, period=page.span, sort=page.sort, anchor=page.anchor)
-
     folders: list[Folder] = []
     folder_total = 0
     if ctx.view == "search" and ctx.value:
-        folders, folder_total = await services.files.search_folders(
-            ctx.value, int(screen.get("u") or 0)
+        # The page and the matching folders are independent queries: run them
+        # together instead of one after the other.
+        page, (folders, folder_total) = await asyncio.gather(
+            services.files.file_list_page(
+                ctx.view,
+                ctx.value,
+                span=ctx.period,
+                sort=ctx.sort,
+                anchor=ctx.anchor,
+                page=ctx.page,
+            ),
+            services.files.search_folders(ctx.value, int(screen.get("u") or 0)),
         )
+    else:
+        page = await services.files.file_list_page(
+            ctx.view,
+            ctx.value,
+            span=ctx.period,
+            sort=ctx.sort,
+            anchor=ctx.anchor,
+            page=ctx.page,
+        )
+    # A clamped page or a normalised filter must be what the next tap carries.
+    ctx = replace(ctx, page=page.page, period=page.span, sort=page.sort, anchor=page.anchor)
     return (
         file_list_text(ctx, page, folder_total),
         file_list_kb(ctx, page, folders),

@@ -486,6 +486,9 @@ class _State:
     async def get_data(self) -> dict[str, object]:
         return dict(self.data)
 
+    async def update_data(self, **values: object) -> None:
+        self.data.update(values)
+
 
 async def _navigate(monkeypatch, module, target_data, stored_screen) -> dict[str, object]:
     captured: dict[str, object] = {}

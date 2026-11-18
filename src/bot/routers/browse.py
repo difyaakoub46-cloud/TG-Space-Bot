@@ -123,7 +123,7 @@ async def file_view_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await navigation.navigate_callback(
         callback, state, bot, services, {"k": "file", "id": record.id}
@@ -137,7 +137,7 @@ async def file_send_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
 
     try:
@@ -146,7 +146,7 @@ async def file_send_callback(
         )
     except TelegramAPIError as exc:
         logger.warning("Could not deliver %s: %s", record.id, exc)
-        await callback.answer(
+        await views.ack(callback,
             pick(
                 "Could not send the file; it may have been deleted from its storage group.",
                 "تعذّر إرسال الملف، ربما حُذف من مجموعة التخزين.",
@@ -177,7 +177,7 @@ async def file_rename_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await state.set_state(RenameStates.waiting_name)
     await state.update_data(
@@ -251,7 +251,7 @@ async def file_folder_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await state.update_data(folder_file_id=record.id)
     await navigation.navigate_callback(
@@ -274,7 +274,7 @@ async def file_delete_callback(
     data = FileCB.unpack(callback.data)
     record = await services.files.get(data.file_id)
     if record is None:
-        await callback.answer(pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
     await navigation.navigate_callback(
         callback,
@@ -295,7 +295,7 @@ async def file_delete_confirm_callback(
     data = FileCB.unpack(callback.data)
     deleted = await services.files.delete(data.file_id)
     if not deleted:
-        await callback.answer(
+        await views.ack(callback,
             pick("Could not delete the file.", "تعذّر حذف الملف."), show_alert=True
         )
         return

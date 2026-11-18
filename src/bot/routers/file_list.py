@@ -56,7 +56,7 @@ async def file_list_callback(
     if data.action == "noop":
         # An inert button (Previous on page one, Next on the last page): it is in
         # the row for the layout, not to do anything.
-        await callback.answer()
+        await views.ack(callback)
         return
 
     if (

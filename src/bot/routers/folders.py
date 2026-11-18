@@ -128,7 +128,7 @@ async def folders_page_indicator_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
     """The page number button only acknowledges the tap."""
-    await callback.answer()
+    await views.ack(callback)
 
 
 @router.callback_query(FolderCB.filter(F.action == "open"))
@@ -138,7 +138,7 @@ async def folder_open_callback(
     data = FolderCB.unpack(callback.data)
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer(
+        await views.ack(callback,
             pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
         )
         return
@@ -157,12 +157,12 @@ async def folder_put_callback(
     file_id = stored.get("folder_file_id")
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer(
+        await views.ack(callback,
             pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
         )
         return
     if not file_id:
-        await callback.answer(
+        await views.ack(callback,
             pick("Pick a file first.", "اختر ملفاً أولاً."), show_alert=True
         )
         return
@@ -197,7 +197,7 @@ async def folder_move_callback(
 
     folder = await services.files.move_favorite(data.value, user_id, step)
     if folder is None:
-        await callback.answer(
+        await views.ack(callback,
             pick(
                 "This folder is not in the favourites.",
                 "هذا المجلد ليس في المفضلة.",
@@ -246,7 +246,7 @@ async def folder_favorite_callback(
 
     folder = await services.files.set_favorite(data.value, user_id, favorite)
     if folder is None:
-        await callback.answer(
+        await views.ack(callback,
             pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
         )
         return
@@ -280,7 +280,7 @@ async def folder_delete_callback(
     data = FolderCB.unpack(callback.data)
     folder = await services.files.folder(data.value, _user_id(callback))
     if folder is None:
-        await callback.answer(
+        await views.ack(callback,
             pick("The folder no longer exists.", "المجلد غير موجود."), show_alert=True
         )
         return
@@ -305,7 +305,7 @@ async def folder_delete_confirm_callback(
     name = folder.name if folder is not None else ""
 
     if not await services.files.delete_folder(data.value, user_id):
-        await callback.answer(
+        await views.ack(callback,
             pick(
                 "Could not delete the folder, please try again.",
                 "تعذّر حذف المجلد، حاول مرة أخرى.",

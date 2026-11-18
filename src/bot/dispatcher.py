@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 
 from aiogram import Dispatcher
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
-from src.bot.middlewares import AccessMiddleware, ContextMiddleware
+from src.bot.middlewares import AckMiddleware, AccessMiddleware, ContextMiddleware
 from src.bot.routers import (
     access,
     browse,
@@ -43,7 +44,13 @@ async def on_error(event: ErrorEvent) -> None:
 
     try:
         if callback is not None:
-            await callback.answer(ERROR_TEXT, show_alert=True)
+            # The query was already acknowledged (see ``AckMiddleware``), so the
+            # alert is delivered as a message instead of a popup.
+            try:
+                await callback.answer(ERROR_TEXT, show_alert=True)
+            except TelegramAPIError:
+                if callback.message is not None:
+                    await callback.message.answer(ERROR_TEXT)
         elif isinstance(message, Message):
             await message.answer(ERROR_TEXT)
     except Exception:  # noqa: BLE001 - never fail inside the error handler
@@ -54,10 +61,14 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
 
     access_guard = AccessMiddleware(services)
+    ack = AckMiddleware()
     middleware = ContextMiddleware(services)
-    # Order matters: the allow-list runs before anything else touches the update.
+    # Order matters: the allow-list runs before anything else touches the update,
+    # and the tap is acknowledged right after it (before any query starts) so the
+    # spinner never waits for the screen.
     dispatcher.message.outer_middleware(access_guard)
     dispatcher.callback_query.outer_middleware(access_guard)
+    dispatcher.callback_query.outer_middleware(ack)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
     # Member and join-request updates only need the services: the owner check and

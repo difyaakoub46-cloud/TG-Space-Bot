@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,7 @@ from aiogram.exceptions import (
 from aiogram.types import Message
 
 from src.core.config import ConfigurationError, Settings
+from src.services.cache import TTLCache
 from src.utils.filetypes import FileCandidate, FileCategory
 from src.utils.telegram import call_with_retry
 
@@ -37,6 +39,10 @@ REQUIRED_RIGHTS: tuple[tuple[str, str, str], ...] = (
 )
 
 ALL_RIGHT_NAMES: tuple[str, ...] = tuple(name for name, _en, _ar in REQUIRED_RIGHTS)
+
+# How long a storage-group answer is reused. Opening «General status» used to
+# re-ask Telegram about every group; the answer can wait a few seconds instead.
+CHECKS_TTL_SECONDS = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +77,7 @@ class StorageService:
         # Telegram upgrades groups to supergroups on its own and then rejects the
         # previous id, so the mapping is followed instead of failing every upload.
         self._migrated: dict[int, int] = {}
+        self._checks = TTLCache(CHECKS_TTL_SECONDS)
 
     @property
     def bot(self) -> Bot:
@@ -174,12 +181,20 @@ class StorageService:
                 return False
             raise
 
-    async def check_chats(self) -> list[StorageChatCheck]:
+    async def check_chats(self, *, refresh: bool = False) -> list[StorageChatCheck]:
         """Reach every configured storage group, one entry per unique chat id.
 
         The report is built here so the owner learns about a wrong id or a missing
-        bot membership at startup instead of at the first upload.
+        bot membership at startup instead of at the first upload. Each group costs
+        two Telegram calls, so the answer is reused for a few seconds (``refresh``
+        asks again) instead of on every screen.
         """
+        if refresh:
+            self._checks.clear()
+        return await self._checks.get("chats", self._probe_chats)
+
+    async def _probe_chats(self) -> list[StorageChatCheck]:
+        """Ask about every group at the same time instead of one by one."""
         grouped: dict[int, set[FileCategory]] = {}
         for category, chat_id in self._settings.storage_chats().items():
             grouped.setdefault(self._current(int(chat_id)), set()).add(category)
@@ -191,8 +206,9 @@ class StorageService:
         if fallback_id is not None and fallback_id not in grouped:
             grouped[fallback_id] = set()
 
-        checks: list[StorageChatCheck] = []
-        for chat_id, categories in grouped.items():
+        async def probe(
+            chat_id: int, categories: set[FileCategory]
+        ) -> StorageChatCheck:
             try:
                 chat = await self._bot.get_chat(chat_id)
             except TelegramAPIError as exc:
@@ -206,32 +222,33 @@ class StorageService:
                     chat_id,
                     reason,
                 )
-                checks.append(
-                    StorageChatCheck(
-                        chat_id=chat_id,
-                        categories=frozenset(categories),
-                        reachable=False,
-                        reason=reason,
-                        is_fallback=chat_id == fallback_id,
-                    )
+                return StorageChatCheck(
+                    chat_id=chat_id,
+                    categories=frozenset(categories),
+                    reachable=False,
+                    reason=reason,
+                    is_fallback=chat_id == fallback_id,
                 )
-            else:
-                logger.info(
-                    "Storage chat ready: %s (%s)", chat_id, chat.title or chat.type
-                )
-                is_admin, missing = await self.check_rights(chat_id)
-                checks.append(
-                    StorageChatCheck(
-                        chat_id=chat_id,
-                        categories=frozenset(categories),
-                        reachable=True,
-                        title=chat.title,
-                        is_fallback=chat_id == fallback_id,
-                        is_admin=is_admin,
-                        missing_rights=missing,
-                    )
-                )
-        return checks
+
+            logger.info(
+                "Storage chat ready: %s (%s)", chat_id, chat.title or chat.type
+            )
+            is_admin, missing = await self.check_rights(chat_id)
+            return StorageChatCheck(
+                chat_id=chat_id,
+                categories=frozenset(categories),
+                reachable=True,
+                title=chat.title,
+                is_fallback=chat_id == fallback_id,
+                is_admin=is_admin,
+                missing_rights=missing,
+            )
+
+        return list(
+            await asyncio.gather(
+                *(probe(chat_id, categories) for chat_id, categories in grouped.items())
+            )
+        )
 
     async def check_rights(self, chat_id: int) -> tuple[bool, tuple[str, ...]]:
         """Whether the bot is an administrator here, and which rights it lacks.

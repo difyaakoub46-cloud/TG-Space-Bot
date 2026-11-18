@@ -32,7 +32,7 @@ async def unknown_message(message: Message, state: FSMContext) -> None:
 
 @router.callback_query()
 async def stale_callback(callback: CallbackQuery) -> None:
-    await callback.answer(
+    await views.ack(callback,
         pick(
             "This button is no longer valid, use /start.",
             "هذا الزر لم يعد صالحاً، استخدم /start.",

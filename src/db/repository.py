@@ -584,6 +584,15 @@ class FileRepository:
                 names.append(str(payload["name"]))
         return sorted(names, key=lambda name: (name.casefold(), name))
 
+    async def set_content_hash(self, file_id: str, content_hash: str) -> None:
+        """Store a fingerprint computed after the upload, without blocking it."""
+        await self._request(
+            "PATCH",
+            params={"id": f"eq.{file_id}"},
+            json={"content_hash": content_hash},
+            prefer="return=minimal",
+        )
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()

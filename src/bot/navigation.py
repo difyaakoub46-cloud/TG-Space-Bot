@@ -126,8 +126,11 @@ async def build(
     kind = screen.get("k")
 
     if kind == "categories":
-        totals = await services.files.category_totals()
-        folders = await services.files.folders(int(screen.get("u") or 0))
+        # The totals and the folder list are independent: ask for both at once.
+        totals, folders = await asyncio.gather(
+            services.files.category_totals(),
+            services.files.folders(int(screen.get("u") or 0)),
+        )
         favorites = sorted(
             (folder for folder in folders if folder.favorite),
             key=lambda folder: folder.favorite_sort_key,

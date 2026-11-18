@@ -14,7 +14,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
-from src.bot import navigation, reports
+from src.bot import navigation, reports, views
 from src.bot.keyboards import MenuCB, pending_kb
 from src.core.i18n import pick
 from src.services.container import Services
@@ -71,10 +71,10 @@ async def repair_callback(
     """Register every held file, then move it into its category group."""
     user_id = int(callback.from_user.id) if callback.from_user else None
     if not _is_owner(services, user_id):
-        await callback.answer(denied_text(), show_alert=True)
+        await views.ack(callback, denied_text(), show_alert=True)
         return
     if services.settings.storage_chat_fallback is None:
-        await callback.answer(not_configured_text(), show_alert=True)
+        await views.ack(callback, not_configured_text(), show_alert=True)
         return
 
     report = await services.files.repair_pending()

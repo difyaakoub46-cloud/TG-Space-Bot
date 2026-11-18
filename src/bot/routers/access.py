@@ -110,7 +110,7 @@ def _storage_ids(services: Services) -> set[int]:
 async def _alert(callback: CallbackQuery, text: str) -> None:
     """Show a short alert; a failed acknowledgement must never break the handler."""
     try:
-        await callback.answer(text[:_MAX_ALERT], show_alert=True)
+        await views.ack(callback, text[:_MAX_ALERT], show_alert=True)
     except TelegramAPIError:
         logger.debug("Could not show an alert", exc_info=True)
 

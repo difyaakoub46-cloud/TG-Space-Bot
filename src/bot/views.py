@@ -258,23 +258,39 @@ async def set_screen(
     await remember(state, sent.message_id)
 
 
-async def _safe_answer(
-    callback: CallbackQuery, text: str | None = None, alert: bool = False
+async def ack(
+    callback: CallbackQuery, text: str | None = None, *, show_alert: bool = False
 ) -> None:
-    """Acknowledge a button press.
+    """Acknowledge a button press, then show whatever the handler wants to say.
 
-    Telegram rejects the acknowledgement of a query older than a few minutes (it
-    answers ``query is too old``), which happens whenever a button from before a
-    bot restart is pressed. The screen itself is already rendered at that point,
-    so a failed acknowledgement must never surface as a user-visible error.
+    ``AckMiddleware`` already acknowledged the query when it arrived, so the
+    spinner is gone before the screen is fetched. Telegram rejects a second
+    acknowledgement; the text is then delivered as a normal message instead of a
+    popup, so a notice the user must see is never lost. A stale query (a button
+    from before a restart) must never surface as an error either.
     """
     try:
         if text is None:
             await callback.answer()
         else:
-            await callback.answer(text, show_alert=alert)
+            await callback.answer(text, show_alert=show_alert)
+        return
     except TelegramAPIError:
-        logger.debug("Could not acknowledge a stale callback query", exc_info=True)
+        logger.debug("Could not acknowledge the callback query", exc_info=True)
+    if not text:
+        return
+    try:
+        if callback.message is not None:
+            await callback.message.answer(text)
+    except TelegramAPIError:
+        logger.debug("Could not deliver the notice", exc_info=True)
+
+
+async def _safe_answer(
+    callback: CallbackQuery, text: str | None = None, alert: bool = False
+) -> None:
+    """Backwards-compatible wrapper around :func:`ack`."""
+    await ack(callback, text, show_alert=alert)
 
 
 async def set_screen_cb(
@@ -283,7 +299,12 @@ async def set_screen_cb(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    """Same as :func:`set_screen` for callback queries, then clears the spinner."""
+    """Same as :func:`set_screen` for callback queries.
+
+    The tap itself was already acknowledged by ``AckMiddleware``, before any
+    query ran, so rendering does not acknowledge it again: a second
+    acknowledgement is rejected by Telegram and would only cost a request.
+    """
     if callback.message is None:
         await _safe_answer(
             callback,
@@ -300,7 +321,6 @@ async def set_screen_cb(
     screen_id = (await state.get_data()).get("screen_message_id")
 
     if screen_id and await _render_screen(bot, chat_id, screen_id, text, reply_markup):
-        await _safe_answer(callback)
         return
 
     if screen_id:
@@ -312,7 +332,6 @@ async def set_screen_cb(
     ):
         await state.update_data(screen_message_id=callback.message.message_id)
         await remember(state, callback.message.message_id)
-        await _safe_answer(callback)
         return
 
     sent = await callback.message.answer(
@@ -320,7 +339,6 @@ async def set_screen_cb(
     )
     await state.update_data(screen_message_id=sent.message_id)
     await remember(state, sent.message_id)
-    await _safe_answer(callback)
 
 
 # --------------------------------------------------------------------------- #
