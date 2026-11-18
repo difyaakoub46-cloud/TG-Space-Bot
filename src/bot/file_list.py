@@ -1,0 +1,458 @@
+"""The shared file-list component: one screen for both ways into the library.
+
+«🔍 Search» and a library category are the same list with a different *view*: the
+first narrows the files by a typed name, the second by their category. Everything
+else — the eight files a page, the five period filters, the six orderings, the
+page turns and the smart day jumps — is written once here and shared.
+
+The screen key holds the whole position so a rebuild needs nothing else::
+
+    {"k": "list", "v": "search"|"category", "val": ..., "f": ..., "srt": ...,
+     "p": ..., "d": ..., "u": ...}
+
+and every button repeats it in :class:`FileListCB`, so a tap never depends on the
+screen the chat happens to be on.
+"""
+
+from __future__ import annotations
+
+import html
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import date
+
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from src.bot import views
+from src.bot.keyboards import FileCB, FolderCB, nav_row
+from src.bot.library_views import (
+    HISTORY_SPANS,
+    history_period_label,
+    history_span_label,
+)
+from src.core.i18n import pick
+from src.db.models import Folder
+from src.services.files import FileListPage, history_date
+from src.utils.formatters import format_number
+from src.utils.sorting import sort_from_key
+
+VIEWS: tuple[str, ...] = ("search", "category")
+
+# A callback is capped at 64 bytes by Telegram; the typed query can be longer, so
+# only its beginning travels in the button and the full text is recovered from the
+# screen key it was typed on.
+_MAX_CALLBACK_VALUE = 16
+_MAX_LABEL = 48
+
+_SORT_LABELS: dict[str, tuple[str, str]] = {
+    "newest": ("🕐 Newest first", "🕐 الأحدث أولاً"),
+    "oldest": ("🕐 Oldest first", "🕐 الأقدم أولاً"),
+    "size_asc": ("📦 Smallest first", "📦 الأصغر أولاً"),
+    "size_desc": ("📦 Largest first", "📦 الأكبر أولاً"),
+    "name_asc": ("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z"),
+    "name_desc": ("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A"),
+}
+
+
+def _escape(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
+# --------------------------------------------------------------------------- #
+# Context: where the list came from, and what it is showing
+# --------------------------------------------------------------------------- #
+class FileListCB(CallbackData, prefix="fl"):
+    """The whole position of the list, carried by every button.
+
+    ``view`` is the entry point (``search`` or ``category``) and ``value`` its
+    context (the typed query or the category name); ``period`` is the time filter,
+    and ``sort``, ``page`` and ``anchor`` are the list's own state.
+    """
+
+    action: str = "open"
+    view: str = "search"
+    value: str = ""
+    period: str = "all"
+    sort: str = "newest"
+    page: int = 1
+    anchor: str = ""
+
+
+@dataclass(frozen=True)
+class FileListContext:
+    """The state of one shared file list."""
+
+    view: str = "search"
+    value: str = ""
+    period: str = "all"
+    sort: str = "newest"
+    page: int = 1
+    anchor: date | None = None
+
+    @classmethod
+    def from_screen(cls, screen: dict[str, object] | None) -> "FileListContext":
+        """Read a screen key back into the context that rendered it."""
+        screen = screen or {}
+        view = str(screen.get("v") or "search")
+        try:
+            page = max(1, int(screen.get("p") or 1))
+        except (TypeError, ValueError):
+            page = 1
+        return cls(
+            view=view if view in VIEWS else "search",
+            value=" ".join(str(screen.get("val") or "").split()),
+            period=str(screen.get("f") or "all"),
+            sort=str(screen.get("srt") or "newest"),
+            page=page,
+            anchor=history_date(screen.get("d")),
+        )
+
+    def to_screen(self, base: dict[str, object] | None = None) -> dict[str, object]:
+        """The screen key of this context, keeping unrelated fields (the user id)."""
+        screen = dict(base or {})
+        screen.update(
+            {
+                "k": "list",
+                "v": self.view,
+                "val": self.value,
+                "f": self.period,
+                "srt": self.sort,
+                "p": max(1, self.page),
+                "d": (self.anchor or history_date()).isoformat(),
+            }
+        )
+        return screen
+
+
+def new_screen(
+    view: str, value: str = "", user_id: int = 0, *, span: str = "all"
+) -> dict[str, object]:
+    """The first page of a list, opened from its own entry point today."""
+    return FileListContext(
+        view=view if view in VIEWS else "search",
+        value=" ".join(str(value or "").split()),
+        period=span,
+        anchor=history_date(),
+    ).to_screen({"u": int(user_id or 0)})
+
+
+def callback_data(
+    ctx: FileListContext,
+    action: str = "open",
+    *,
+    page: int | None = None,
+    sort: str | None = None,
+    anchor: date | None = None,
+) -> str:
+    """Pack the context (plus what the tap changes) into a button's data."""
+    return FileListCB(
+        action=action,
+        view=ctx.view,
+        value=ctx.value[:_MAX_CALLBACK_VALUE],
+        period=ctx.period,
+        sort=sort or ctx.sort,
+        page=max(1, page if page is not None else ctx.page),
+        anchor=(anchor or ctx.anchor or history_date()).isoformat(),
+    ).pack()
+
+
+# --------------------------------------------------------------------------- #
+# Text
+# --------------------------------------------------------------------------- #
+def file_list_text(
+    ctx: FileListContext, page: FileListPage, folder_total: int = 0
+) -> str:
+    """The header of the list: where it comes from, its date, its size and sort."""
+    if ctx.view == "category":
+        title = f"<b>{_escape(views.category_label(ctx.value))}</b>"
+    elif ctx.value:
+        title = pick(
+            f"🔍 <b>Search: «{_escape(ctx.value)}»</b>",
+            f"🔍 <b>البحث عن «{_escape(ctx.value)}»</b>",
+        )
+    else:
+        title = pick("🔍 <b>Search</b>", "🔍 <b>البحث</b>")
+
+    # The date of the period is always the first thing under the title.
+    lines = [title, _escape(history_period_label(page))]
+
+    summary = pick(
+        f"📄 {format_number(page.total)} file(s)",
+        f"📄 {format_number(page.total)} ملف",
+    )
+    if ctx.view == "search" and ctx.value:
+        summary += pick(
+            f" · 📁 {format_number(folder_total)} folder(s)",
+            f" · 📁 {format_number(folder_total)} مجلد",
+        )
+    if page.pages > 1:
+        summary += pick(
+            f" · 📄 Page {page.page} of {page.pages}",
+            f" · 📄 الصفحة {page.page} من {page.pages}",
+        )
+    lines.append(summary)
+    lines.append(
+        pick(
+            f"🔃 Ordering: {views.sort_summary(sort_from_key(ctx.sort))}",
+            f"🔃 الترتيب: {views.sort_summary(sort_from_key(ctx.sort))}",
+        )
+    )
+
+    if not page.files:
+        lines.append("")
+        if ctx.view == "search" and ctx.value:
+            lines.append(
+                pick(
+                    "No matching files or folders.",
+                    "لا توجد ملفات أو مجلدات مطابقة.",
+                )
+            )
+        elif ctx.view == "search":
+            lines.append(pick("There are no uploads yet.", "لا توجد ملفات بعد."))
+        else:
+            lines.append(
+                pick("No files in this period.", "لا توجد ملفات في هذه الفترة.")
+            )
+    elif ctx.view == "search" and ctx.value and folder_total:
+        lines.append("")
+        lines.append(
+            pick(
+                "The matching folders are under the file buttons.",
+                "المجلدات المطابقة أسفل أزرار الملفات.",
+            )
+        )
+
+    if ctx.view == "search":
+        lines.append("")
+        lines.append(
+            pick(
+                "Type another message to search again."
+                if ctx.value
+                else "Type a message to search the files and the folders.",
+                "أرسل رسالة أخرى للبحث من جديد."
+                if ctx.value
+                else "اكتب رسالة للبحث في الملفات والمجلدات.",
+            )
+        )
+    return "\n".join(lines)
+
+
+def sort_menu_text(ctx: FileListContext) -> str:
+    """The ordering panel: the current choice and what a tap does."""
+    return "\n".join(
+        [
+            pick("🔃 <b>Sort the files</b>", "🔃 <b>فرز وترتيب الملفات</b>"),
+            "",
+            pick(
+                f"Current ordering: <b>{views.sort_summary(sort_from_key(ctx.sort))}</b>",
+                f"الترتيب الحالي: <b>{views.sort_summary(sort_from_key(ctx.sort))}</b>",
+            ),
+            "",
+            pick(
+                "Pick an ordering; the list is refreshed in place. The ordering "
+                "covers every file of the list, not the page, and returns you to "
+                "the first page because the page numbers change.",
+                "اختر ترتيباً؛ تتحدّث القائمة في مكانها. الفرز يشمل كل ملفات "
+                "القائمة لا الصفحة المعروضة، ويعود بك إلى الصفحة الأولى لأن "
+                "ترقيم الصفحات يتغيّر.",
+            ),
+        ]
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Keyboard
+# --------------------------------------------------------------------------- #
+def _file_label(file) -> str:
+    """One file button: its name, its size and the time it was saved."""
+    text = f"📄 {file.file_name} - {file.size_human} - {file.created_at:%H:%M}"
+    return text if len(text) <= 55 else f"{text[:54]}…"
+
+
+def _folder_label(folder: Folder) -> str:
+    name = folder.name
+    if len(name) > _MAX_LABEL:
+        name = f"{name[: _MAX_LABEL - 1]}…"
+    return f"📁 {name} ({format_number(folder.count)})"
+
+
+def _jump_label(span: str, *, older: bool) -> str:
+    """«Next Day ⏭️» and friends, matching the active period filter."""
+    labels = {
+        "day": ("Next Day ⏭️", "اليوم التالي ⏭️", "⏮️ Previous Day", "⏮️ اليوم السابق"),
+        "week": ("Next Week ⏭️", "الأسبوع التالي ⏭️", "⏮️ Previous Week", "⏮️ الأسبوع السابق"),
+        "month": ("Next Month ⏭️", "الشهر التالي ⏭️", "⏮️ Previous Month", "⏮️ الشهر السابق"),
+        "year": ("Next Year ⏭️", "السنة التالية ⏭️", "⏮️ Previous Year", "⏮️ السنة السابقة"),
+    }.get(span, ("Next ▶️", "التالي ▶️", "⏮️ Previous", "⏮️ السابق"))
+    index = 0 if older else 2
+    return pick(labels[index], labels[index + 1])
+
+
+def _controls(ctx: FileListContext, page: FileListPage) -> list[InlineKeyboardButton]:
+    """Previous / next: within the period first, then to the closest day."""
+    buttons: list[InlineKeyboardButton] = []
+    if page.newer_page is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("◀ Previous", "◀ السابق"),
+                callback_data=callback_data(ctx, page=page.newer_page),
+            )
+        )
+    elif page.prev_anchor is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=_jump_label(page.span, older=False),
+                callback_data=callback_data(ctx, page=1, anchor=page.prev_anchor),
+            )
+        )
+
+    if page.older_page is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("Next ▶", "التالي ▶"),
+                callback_data=callback_data(ctx, page=page.older_page),
+            )
+        )
+    elif page.next_anchor is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=_jump_label(page.span, older=True),
+                callback_data=callback_data(ctx, page=1, anchor=page.next_anchor),
+            )
+        )
+    return buttons
+
+
+def file_list_kb(
+    ctx: FileListContext,
+    page: FileListPage,
+    folders: Sequence[Folder] = (),
+) -> InlineKeyboardMarkup:
+    """Filters, up to eight files, the page controls, sorting and the menu row."""
+    builder = InlineKeyboardBuilder()
+
+    filters = [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if span == page.span else ''}{history_span_label(span)}",
+            callback_data=FileListCB(
+                action="open",
+                view=ctx.view,
+                value=ctx.value[:_MAX_CALLBACK_VALUE],
+                period=span,
+                sort=ctx.sort,
+                page=1,
+                anchor=page.anchor.isoformat(),
+            ).pack(),
+        )
+        for span in HISTORY_SPANS
+    ]
+    # The filters stay one group on top, split 3 + 2 so the labels stay readable.
+    builder.row(*filters[:3])
+    builder.row(*filters[3:])
+
+    for file in page.files:
+        builder.row(
+            InlineKeyboardButton(
+                text=_file_label(file),
+                callback_data=FileCB(action="view", file_id=file.id).pack(),
+            )
+        )
+
+    for folder in folders:
+        builder.row(
+            InlineKeyboardButton(
+                text=_folder_label(folder),
+                callback_data=FolderCB(action="open", value=folder.id).pack(),
+            )
+        )
+
+    controls = _controls(ctx, page)
+    if controls:
+        builder.row(*controls)
+
+    builder.row(
+        InlineKeyboardButton(
+            text=f"{pick('🔃 Sort', '🔃 ترتيب')} · {views.sort_short(sort_from_key(ctx.sort))}",
+            callback_data=callback_data(ctx, "sort"),
+        )
+    )
+
+    if ctx.view == "search" and ctx.value:
+        builder.row(
+            InlineKeyboardButton(
+                text=pick("✖️ Clear search", "✖️ مسح البحث"),
+                callback_data=callback_data(ctx, "clear", page=1),
+            )
+        )
+
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def sort_menu_kb(ctx: FileListContext) -> InlineKeyboardMarkup:
+    """Every ordering as one button, the active one marked with ✅."""
+    builder = InlineKeyboardBuilder()
+    for key in _SORT_LABELS:
+        label = pick(*_SORT_LABELS[key])
+        active = key == ctx.sort
+        builder.button(
+            text=f"{'✅ ' if active else ''}{label}",
+            callback_data=callback_data(ctx, "sorted", page=1, sort=key),
+        )
+    builder.adjust(2)
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("↩️ Back to the list", "↩️ رجوع إلى القائمة"),
+            callback_data=callback_data(ctx, "back"),
+        )
+    )
+    return builder.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+# The one entry point both sections call
+# --------------------------------------------------------------------------- #
+async def screen(services, screen: dict[str, object]) -> tuple[str, InlineKeyboardMarkup]:
+    """Build the shared file list for a screen key.
+
+    Both entry points end here: «🔍 Search» passes its typed query, a library
+    category its name, and the service applies the view's ``WHERE``, the period
+    window, the ``ORDER BY`` and the eight-file ``LIMIT``/``OFFSET`` slice.
+    """
+    ctx = FileListContext.from_screen(screen)
+    page = await services.files.file_list_page(
+        ctx.view,
+        ctx.value,
+        span=ctx.period,
+        sort=ctx.sort,
+        anchor=ctx.anchor,
+        page=ctx.page,
+    )
+    # A clamped page or a normalised filter must be what the next tap carries.
+    ctx = replace(ctx, page=page.page, period=page.span, sort=page.sort, anchor=page.anchor)
+
+    folders: list[Folder] = []
+    folder_total = 0
+    if ctx.view == "search" and ctx.value:
+        folders, folder_total = await services.files.search_folders(
+            ctx.value, int(screen.get("u") or 0)
+        )
+    return (
+        file_list_text(ctx, page, folder_total),
+        file_list_kb(ctx, page, folders),
+    )
+
+
+__all__ = [
+    "FileListCB",
+    "FileListContext",
+    "callback_data",
+    "file_list_kb",
+    "file_list_text",
+    "new_screen",
+    "screen",
+    "sort_menu_kb",
+    "sort_menu_text",
+]
