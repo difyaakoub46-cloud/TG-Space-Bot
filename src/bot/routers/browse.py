@@ -24,6 +24,7 @@ from src.bot.keyboards import (
 from src.bot.states import RenameStates
 from src.core.i18n import pick
 from src.services.container import Services
+from src.services.files import history_date, history_span
 from src.utils.filetypes import parse_category
 
 logger = logging.getLogger(__name__)
@@ -65,10 +66,14 @@ async def categories_callback(
 async def menu_history_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Open «🕘 History uploads»: the whole archive, newest first."""
+    """Open «📂 History uploads» on today, the first period filter."""
     await views.reset_flow(state)
     await navigation.navigate_callback(
-        callback, state, bot, services, {"k": "history"}
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "history", "f": "day", "d": history_date().isoformat()},
     )
 
 
@@ -76,29 +81,28 @@ async def menu_history_callback(
 async def history_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Change the category, the date window or the page of the archive.
+    """Open a period, turn its pages or jump to the nearest day with files.
 
-    The choice lives in the screen key, so a page change keeps the filter and a
-    filter change restarts from the first page.
+    The callback carries the whole position (action, filter, target date and page),
+    so the new screen is rebuilt from the tap alone: a filter tap restarts on page
+    one, a page tap keeps the day, and a jump only changes the anchor day.
     """
-    data = HistoryCB.unpack(callback.data)
-    stored = await state.get_data()
-    screen = dict(stored.get("screen_key") or {})
-    if screen.get("k") != "history":
-        screen = {"k": "history"}
-
-    if data.action == "cat":
-        screen["c"] = "" if data.value in ("", "all") else data.value
-        screen.pop("p", None)
-    elif data.action == "span":
-        screen["r"] = data.value or "all"
-        screen.pop("p", None)
-    elif data.action == "page":
-        try:
-            screen["p"] = max(1, int(data.value))
-        except (TypeError, ValueError):
-            screen["p"] = 1
-
+    try:
+        data = HistoryCB.unpack(callback.data)
+    except (TypeError, ValueError):
+        # A button left over from the older screen: open the first period instead
+        # of failing the tap.
+        data = HistoryCB(action="filter")
+    try:
+        page = max(1, int(data.page_number or 1))
+    except (TypeError, ValueError):
+        page = 1
+    screen = {
+        "k": "history",
+        "f": history_span(data.filter_type),
+        "d": history_date(data.target_date).isoformat(),
+        "p": page,
+    }
     await navigation.navigate_callback(
         callback, state, bot, services, screen, push=False
     )

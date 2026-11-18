@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import html
 from collections.abc import Sequence
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from src.bot.views import category_label
 from src.core.i18n import pick
 from src.db.models import StoredFile
-from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
+
+if TYPE_CHECKING:
+    from src.services.files import HistoryPage
 
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
@@ -24,14 +28,65 @@ def _escape(value: object) -> str:
 
 
 def history_span_label(span: str) -> str:
-    """The date window of «History uploads», in the active language."""
+    """The period filters of «History uploads», in the active language."""
     return {
         "day": pick("📅 Today", "📅 اليوم"),
-        "week": pick("🗓 This week", "🗓 هذا الأسبوع"),
-        "month": pick("🗓 This month", "🗓 هذا الشهر"),
-        "year": pick("🗓 This year", "🗓 هذه السنة"),
-        "all": pick("🗂 All time", "🗂 كل الوقت"),
-    }.get(str(span or "all"), str(span))
+        "week": pick("📅 This Week", "📅 هذا الأسبوع"),
+        "month": pick("📅 This Month", "📅 هذا الشهر"),
+        "year": pick("📅 This Year", "📅 هذه السنة"),
+        "all": pick("📁 All time", "📁 كل الوقت"),
+    }.get(str(span or "day"), str(span))
+
+
+def _period_range(first: date, last: date) -> str:
+    """A compact ``12 Nov - 18 Nov`` range, in the active language."""
+    return pick(
+        f"{first:%d %b} - {last:%d %b}",
+        f"{first:%d %b} - {last:%d %b}",
+    )
+
+
+def history_period_label(page: HistoryPage) -> str:
+    """The period on screen, e.g. «📅 Today: 2026-11-18» or the week's range.
+
+    Only the current period is written out: the filters live on the buttons, so
+    the message has no «Showing …» or «Page x of y» line to read through.
+    """
+    today = datetime.now(timezone.utc).date()
+    if page.span == "all":
+        return pick("📁 All time", "📁 كل الوقت")
+    if page.span == "day":
+        if page.anchor == today:
+            return pick(
+                f"📅 Today: {page.anchor.isoformat()}",
+                f"📅 اليوم: {page.anchor.isoformat()}",
+            )
+        return f"📅 {page.anchor.isoformat()}"
+    if page.span == "week":
+        first = page.anchor - timedelta(days=page.anchor.weekday())
+        last = first + timedelta(days=6)
+        current = first <= today <= last
+        header = (
+            pick("📅 This Week", "📅 هذا الأسبوع")
+            if current
+            else pick("📅 Week", "📅 الأسبوع")
+        )
+        return f"{header}: {_period_range(first, last)}"
+    if page.span == "month":
+        current = (page.anchor.year, page.anchor.month) == (today.year, today.month)
+        header = (
+            pick("📅 This Month", "📅 هذا الشهر")
+            if current
+            else pick("📅 Month", "📅 الشهر")
+        )
+        return f"{header}: {page.anchor:%Y-%m}"
+    current = page.anchor.year == today.year
+    header = (
+        pick("📅 This Year", "📅 هذه السنة")
+        if current
+        else pick("📅 Year", "📅 السنة")
+    )
+    return f"{header}: {page.anchor.year}"
 
 
 def saved_screen_settings_text(show: bool = True) -> str:
@@ -201,68 +256,25 @@ def saved_batch_text(
     return "\n".join(lines)
 
 
-def history_text(
-    files: Sequence[StoredFile],
-    total: int = 0,
-    category: FileCategory | None = None,
-    span: str = "all",
-    page: int = 1,
-    pages: int = 1,
-) -> str:
-    """The archive: every uploaded file, newest first, grouped by day.
+def history_text(page: HistoryPage) -> str:
+    """The archive screen: only its title, the period on screen and its files.
 
-    The filters are part of the screen key, so the same list survives a page
-    change; the files themselves are always ordered from the newest to the oldest.
+    The files are buttons, so the message stays clean: no “Newest first”, no
+    category labels, no counters and no “Page x of y”. The period line is the only
+    context kept, and an empty period says so instead of listing nothing.
     """
-    label = (
-        category_label(category)
-        if category is not None
-        else pick("🗂 All files", "🗂 كل الملفات")
-    )
     lines = [
-        pick("🕘 <b>History uploads</b>", "🕘 <b>سجل الرفع</b>"),
-        "",
-        pick(
-            f"Showing: <b>{label}</b> · <b>{history_span_label(span)}</b>",
-            f"المعروض: <b>{label}</b> · <b>{history_span_label(span)}</b>",
-        ),
-        pick(
-            f"Files: {format_number(total)}",
-            f"عدد الملفات: {format_number(total)}",
-        ),
+        pick("📂 <b>History uploads</b>", "📂 <b>سجل الرفع</b>"),
+        _escape(history_period_label(page)),
     ]
-    if pages > 1:
-        lines.append(pick(f"📄 Page {page} of {pages}", f"📄 الصفحة {page} من {pages}"))
-
-    if not files:
+    if not page.files:
         lines.extend(
             [
                 "",
                 pick(
-                    "No uploads match this filter yet.",
-                    "لا توجد ملفات مرفوعة ضمن هذا الاختيار بعد.",
+                    "No uploads in this period.",
+                    "لا توجد ملفات في هذه الفترة.",
                 ),
             ]
-        )
-        return "\n".join(lines)
-
-    lines.extend(
-        [
-            "",
-            pick(
-                "Newest first; pick a category or a time window below to narrow it.",
-                "الترتيب من الأحدث إلى الأقدم؛ اختر فئة أو فترة زمنية أدناه للتضييق.",
-            ),
-        ]
-    )
-    current_day = None
-    for file in files:
-        day = file.created_at.date()
-        if day != current_day:
-            current_day = day
-            lines.extend(["", f"<b>📅 {day.isoformat()}</b>"])
-        lines.append(
-            f"• {_escape(file.file_name)} — {_escape(file.size_human)} · "
-            f"{file.created_at.strftime('%H:%M')}"
         )
     return "\n".join(lines)
