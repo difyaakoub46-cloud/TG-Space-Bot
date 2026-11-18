@@ -1,12 +1,13 @@
 """File ingestion: move every incoming file into its storage group.
 
 Telegram delivers an album (a media group) as several separate messages and never
-says which one is the last. Handling each message on its own made every copy
-rewrite the same single screen, so an album of six files ended up as one saved
-card — the last file — and the actions on it belonged to that file only. An album
-is therefore collected for a moment and handled as one batch, and the batch screen
-keeps one button per file so each file can be opened, or sent into its own folder,
-on its own.
+says which one is the last. The desktop client is worse: files picked together are
+sent as separate messages with no album id at all. Handling each message on its own
+made every copy rewrite the same single screen, so six files uploaded together
+ended up as one saved card — the last file — and the actions on it belonged to that
+file only. Incoming files are therefore collected for a moment and handled as one
+batch, and the batch screen keeps one button per file so each file can be opened,
+or sent into its own folder, on its own.
 """
 
 from __future__ import annotations
@@ -39,11 +40,14 @@ SUPPORTED_MEDIA = (
     F.document | F.photo | F.video | F.audio | F.voice | F.animation | F.video_note
 )
 
-# How long to wait for the remaining items of an album. Telegram sends them
-# within milliseconds, but no update announces that the group is complete.
+# How long to wait for the remaining items of an upload. Telegram sends the items
+# of an album within milliseconds, but no update announces that the group is
+# complete; a selection of files the desktop client sends as separate messages
+# gets a shorter window so a single file is not kept waiting for long.
 ALBUM_WINDOW = 1.5
+SINGLE_WINDOW = 1.2
 
-# Albums being collected: ``(chat_id, media_group_id)`` → their messages.
+# Uploads being collected: ``(chat_id, media_group_id or "single")`` → messages.
 _albums: dict[tuple[int, str], list[Message]] = {}
 
 
@@ -83,21 +87,22 @@ async def handle_upload(
         return
 
     album_id = message.media_group_id
-    if not album_id:
-        await _handle_one(message, services, state, bot)
-        return
-
-    key = (message.chat.id, str(album_id))
+    key = (message.chat.id, str(album_id) if album_id else "single")
     collected = _albums.get(key)
     if collected is not None:
-        # A later item of an album already being collected: the first handler
-        # owns the batch and will save every item once the window closes.
+        # A later file of an upload already being collected: the first handler
+        # owns the batch and will save every file once the window closes.
         collected.append(message)
         return
 
     collected = _albums[key] = [message]
-    await asyncio.sleep(ALBUM_WINDOW)
+    await asyncio.sleep(ALBUM_WINDOW if album_id else SINGLE_WINDOW)
     _albums.pop(key, None)
+
+    if not album_id and len(collected) == 1:
+        # One file on its own keeps its own card and its own failure text.
+        await _handle_one(message, services, state, bot)
+        return
     await _handle_album(collected, services, state, bot)
 
 
@@ -283,6 +288,20 @@ async def _handle_album(
     # Every saved (and already stored) file is reachable one by one: the batch
     # screen starts on the first file and «Next ▶» walks to the last one.
     batch_files = [*batch.saved, *batch.duplicates]
+    if not batch_files:
+        # Nothing reached the library (held or failed): the reserve screen
+        # already lists those files, so there is no batch to walk.
+        await navigation.navigate_message(
+            first,
+            state,
+            bot,
+            services,
+            {"k": "pending"},
+            notice=views.files_saved_text(
+                [], [], batch.quarantined, batch.failures
+            ),
+        )
+        return
     await navigation.navigate_message(
         first,
         state,
