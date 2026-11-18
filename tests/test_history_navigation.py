@@ -11,10 +11,11 @@ from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
-from src.bot.keyboards import HistoryCB, history_kb
+from src.bot import navigation
+from src.bot.keyboards import FolderCB, HistoryCB, folder_files_kb, history_kb
 from src.core.config import Settings
 from src.db.models import StoredFile
-from src.services.files import HISTORY_PAGE_SIZE, FileStorageServices, history_window
+from src.services.files import FILES_PER_PAGE, FileStorageServices, history_window
 from src.utils.filetypes import FileCategory
 
 UTC = timezone.utc
@@ -48,6 +49,9 @@ class HistoryRepository:
     def __init__(self, files: list[StoredFile]) -> None:
         self.files = list(files)
         self.calls: list[dict[str, object]] = []
+
+    async def files_in_folder(self, folder_id: str) -> list[StoredFile]:
+        return list(self.files)
 
     async def search(
         self,
@@ -116,7 +120,7 @@ async def test_a_day_is_eight_files_then_next_page_then_next_day() -> None:
     library = service(files)
 
     first = await library.history_page("day", TODAY)
-    assert len(first.files) == HISTORY_PAGE_SIZE == 8
+    assert len(first.files) == FILES_PER_PAGE == 8
     assert (first.total, first.page, first.pages) == (20, 1, 3)
     assert first.older_page == 2
     assert first.newer_page is None
@@ -239,6 +243,49 @@ async def test_all_time_has_no_period_jumps() -> None:
     assert page.total == 2
     assert page.next_anchor is None and page.prev_anchor is None
     assert all(button.action != "jump" for button in history_buttons(history_kb(page)))
+
+
+async def test_a_category_page_holds_eight_files_too() -> None:
+    library = service(today_files(20))
+
+    first, total, page = await library.category_page(FileCategory.document)
+    assert len(first) == FILES_PER_PAGE == 8
+    assert (total, page) == (20, 1)
+
+    last, _total, page = await library.category_page(FileCategory.document, page=3)
+    assert len(last) == 4
+    assert page == 3
+
+
+async def test_a_folder_page_holds_eight_files_and_clamps_the_page() -> None:
+    library = service(today_files(20))
+
+    first, total, page = await library.folder_page("folder-1")
+    assert (len(first), total, page) == (8, 20, 1)
+
+    middle, _total, page = await library.folder_page("folder-1", page=2)
+    assert (len(middle), page) == (8, 2)
+
+    last, _total, page = await library.folder_page("folder-1", page=9)
+    assert (len(last), page) == (4, 3)
+
+    assert {file.id for file in first} & {file.id for file in middle} == set()
+
+
+def test_the_folder_page_controls_sit_under_its_files() -> None:
+    markup = navigation._with_folder_pages(  # noqa: SLF001 - the row it inserts
+        folder_files_kb(today_files(5), folder_id="folder-1"), 2, 3, 5
+    )
+
+    steps = [
+        FolderCB.unpack(button.callback_data)
+        for row in markup.inline_keyboard
+        for button in row
+        if (button.callback_data or "").startswith("fld:fpage:")
+    ]
+    assert [step.value for step in steps] == ["1", "1", "3", "3"]
+    # The pages come right after the five file buttons, before the sort button.
+    assert len(markup.inline_keyboard[5]) == 4
 
 
 async def test_history_kb_orders_filters_files_navigation_then_menu() -> None:
