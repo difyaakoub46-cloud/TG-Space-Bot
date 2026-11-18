@@ -111,6 +111,25 @@ class ListRepository:
         )
         return rows[offset : offset + limit], len(rows)
 
+    async def created_dates(
+        self,
+        *,
+        query: str | None = None,
+        category: FileCategory | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[datetime]:
+        """The dates only, newest first: what the period picker folds."""
+        needle = (query or "").casefold()
+        rows = [
+            file
+            for file in self.files
+            if (not needle or needle in file.file_name.casefold())
+            and (category is None or file.category is category)
+        ]
+        rows.sort(key=lambda file: file.created_at, reverse=True)
+        return [file.created_at for file in rows[offset : offset + limit]]
+
 
 def service(
     files: list[StoredFile], folders: list[Folder] | None = None
@@ -172,8 +191,9 @@ async def test_the_list_shows_eight_files_and_the_date_on_top() -> None:
     assert "Page 1 of 3" in text
     file_buttons = buttons(markup, "file:view:")
     assert len(file_buttons) == FILES_PER_PAGE == 8
-    # Filters, eight files, the page row, the sort row, Back / Main menu.
-    assert [len(row) for row in markup.inline_keyboard] == [3, 2] + [1] * 8 + [1, 1, 2]
+    # The filter row, eight files, the page row (Previous, Next, jump), the sort
+    # row, Back / Main menu.
+    assert [len(row) for row in markup.inline_keyboard] == [5] + [1] * 8 + [3, 1, 2]
 
     _text, second = await navigation.build(
         SimpleNamespace(files=library), screen(f="day", p=2)
@@ -231,7 +251,7 @@ async def test_the_period_filter_narrows_the_list() -> None:
     assert len(buttons(all_time, "file:view:")) == 4
 
 
-async def test_a_finished_period_turns_next_into_next_day() -> None:
+async def test_the_quick_jump_reaches_the_closest_older_day() -> None:
     library = service(documents(20) + [record(100, moment(OLDER_DAY))])
 
     _text, last = await navigation.build(
@@ -253,7 +273,7 @@ async def test_a_finished_period_turns_next_into_next_day() -> None:
     assert jump.view == "category"
 
 
-async def test_an_empty_period_jumps_to_the_closest_day_on_each_side() -> None:
+async def test_an_empty_period_still_offers_the_jump_to_older_files() -> None:
     library = service([record(1, moment(TODAY)), record(2, moment(OLDER_DAY))])
     empty_day = (OLDER_DAY + timedelta(days=1)).isoformat()
 
@@ -262,14 +282,15 @@ async def test_an_empty_period_jumps_to_the_closest_day_on_each_side() -> None:
         screen(f="day", d=empty_day, val="document"),
     )
 
+    # Nothing to show here and nothing newer, so «Previous» is inert while the
+    # quick jump still reaches the closest older day that has files.
     previous = next(
         button
         for row in markup.inline_keyboard
         for button in row
-        if button.text.startswith("⏮️ Previous Day")
+        if button.text.startswith("◀️ Previous")
     )
-    # «Previous» walks towards the newer day that has files, «Next» to the older.
-    assert FileListCB.unpack(previous.callback_data).anchor == TODAY.isoformat()
+    assert FileListCB.unpack(previous.callback_data).action == "noop"
 
     following = next(
         button
@@ -287,17 +308,24 @@ async def test_every_filter_button_carries_its_own_period() -> None:
         SimpleNamespace(files=library), screen(f="day")
     )
 
-    periods = [
-        FileListCB.unpack(button.callback_data).period
-        for row in markup.inline_keyboard[:2]
-        for button in row
+    filters = markup.inline_keyboard[0]
+    periods = [FileListCB.unpack(button.callback_data).period for button in filters]
+    # «All time» first, then the growing periods: the five fit in one row.
+    assert periods == ["all", "day", "week", "month", "year"]
+    assert [button.text.replace("✅ ", "") for button in filters] == [
+        "📁 All time",
+        "📅 Day",
+        "📅 Week",
+        "📅 Month",
+        "📅 Year",
     ]
-    assert periods == ["day", "week", "month", "year", "all"]
     # The active period is the only one marked with ✅.
-    assert markup.inline_keyboard[0][0].text.startswith("✅ ")
-    assert not any(
-        button.text.startswith("✅ ") for button in markup.inline_keyboard[0][1:]
-    )
+    assert filters[1].text.startswith("✅ ")
+    assert not any(button.text.startswith("✅ ") for button in filters[:1] + filters[2:])
+    # A filter tap is its own action, so a second tap can open the picker.
+    assert all(data.action == "filter" for data in (
+        FileListCB.unpack(button.callback_data) for button in filters
+    ))
 
 
 # --------------------------------------------------------------------------- #
@@ -333,9 +361,9 @@ async def test_search_passes_its_query_and_the_category_passes_its_name() -> Non
     # Only search can be cleared: a category has no query to drop.
     assert buttons(category_kb, "fl:clear") == []
     # Both entry points render the very same component layout.
-    assert len(search_kb.inline_keyboard[0]) == 3
-    assert len(category_kb.inline_keyboard[0]) == 3
-    assert search_kb.inline_keyboard[0][0].callback_data.startswith("fl:open:")
+    assert len(search_kb.inline_keyboard[0]) == 5
+    assert len(category_kb.inline_keyboard[0]) == 5
+    assert search_kb.inline_keyboard[0][0].callback_data.startswith("fl:filter:")
 
 
 async def test_the_sort_panel_offers_the_six_orderings() -> None:
@@ -604,6 +632,171 @@ async def test_an_empty_list_says_so_without_losing_its_controls(view: str) -> N
     )
 
     assert "No matching files" in text or "No files in this period" in text
-    # Filters, sort, (clear for search), back / main menu: the controls stay usable.
+    # Filters, the page row, sort, (clear for search), back / main menu.
     assert len(markup.inline_keyboard) == (5 if view == "search" else 4)
     assert markup.inline_keyboard[-1][0].callback_data.startswith("menu:back")
+
+
+# --------------------------------------------------------------------------- #
+# Page turners and the quick period jump
+# --------------------------------------------------------------------------- #
+async def test_previous_and_next_are_inert_at_the_edges_of_the_period() -> None:
+    library = service(documents(20))
+
+    def find(markup, prefix: str):
+        return next(
+            button
+            for row in markup.inline_keyboard
+            for button in row
+            if button.text.startswith(prefix)
+        )
+
+    _text, first = await navigation.build(
+        SimpleNamespace(files=library), screen(f="day")
+    )
+    assert FileListCB.unpack(find(first, "◀️ Previous").callback_data).action == "noop"
+
+    _text, second = await navigation.build(
+        SimpleNamespace(files=library), screen(f="day", p=2)
+    )
+    pager = FileListCB.unpack(find(second, "◀️ Previous").callback_data)
+    assert (pager.action, pager.page) == ("open", 1)
+    assert FileListCB.unpack(find(second, "Next ▶️").callback_data).page == 3
+
+    _text, last = await navigation.build(
+        SimpleNamespace(files=library), screen(f="day", p=3)
+    )
+    assert FileListCB.unpack(find(last, "Next ▶️").callback_data).action == "noop"
+
+
+@pytest.mark.parametrize(
+    ("period", "anchor_day", "label"),
+    [
+        ("week", TODAY - timedelta(days=20), "Next Week ⏭️"),
+        ("month", date(2026, 4, 3), "Next Month ⏭️"),
+        ("year", date(2024, 5, 4), "Next Year ⏭️"),
+    ],
+)
+async def test_the_quick_jump_names_the_active_period(
+    period: str, anchor_day: date, label: str
+) -> None:
+    library = service([record(1, moment(TODAY)), record(2, moment(anchor_day))])
+
+    _text, markup = await navigation.build(
+        SimpleNamespace(files=library), screen(f=period)
+    )
+
+    jump = next(
+        button
+        for row in markup.inline_keyboard
+        for button in row
+        if button.text == label
+    )
+    data = FileListCB.unpack(jump.callback_data)
+    # Straight to the closest older period with files, not to the next page.
+    assert (data.action, data.page, data.anchor) == (
+        "open",
+        1,
+        anchor_day.isoformat(),
+    )
+    assert data.period == period
+
+
+# --------------------------------------------------------------------------- #
+# The period picker: the second tap on a filter
+# --------------------------------------------------------------------------- #
+async def test_the_picker_offers_only_periods_that_hold_a_matching_file() -> None:
+    library = service(documents(1) + [record(100, moment(OLDER_DAY))])
+
+    assert await library.available_periods(
+        "category", "document", span="day"
+    ) == [TODAY, OLDER_DAY]
+    assert await library.available_periods(
+        "category", "document", span="month"
+    ) == [TODAY]
+    # «All time» is a single period: it has no picker.
+    assert await library.available_periods("category", "document", span="all") == []
+
+    search_library = service(
+        [record(1, moment(WEEK_DAY), "holiday.jpg"), record(2, moment(TODAY))]
+    )
+    # The picker keeps the view's filter, so a search offers only its own days.
+    assert await search_library.available_periods(
+        "search", "holiday", span="day"
+    ) == [WEEK_DAY]
+
+
+async def test_a_second_tap_on_the_active_filter_opens_the_picker(monkeypatch) -> None:
+    library = service(documents(2) + [record(100, moment(OLDER_DAY))])
+    target = FileListCB(
+        action="filter",
+        view="category",
+        value="document",
+        period="day",
+        sort="newest",
+        page=1,
+        anchor=TODAY.isoformat(),
+    ).pack()
+
+    captured: dict[str, object] = {}
+
+    async def navigate(callback, state, bot, services, target_screen, **kwargs):
+        captured["screen"] = target_screen
+        captured["notice"] = kwargs.get("notice")
+        captured["markup"] = kwargs.get("markup")
+
+    monkeypatch.setattr(file_list_router.navigation, "navigate_callback", navigate)
+    await file_list_router.file_list_callback(
+        _Callback(target),
+        services=SimpleNamespace(files=library),
+        state=_State(screen("category", f="day")),
+        bot=None,
+    )
+
+    assert "Pick a period" in captured["notice"]
+    labels = [
+        button.text for row in captured["markup"].inline_keyboard for button in row
+    ]
+    assert labels[:2] == ["✅ 2026-11-18", "2026-11-15"]
+    # The picker sits on the same list, on the same page, with a way back to it.
+    assert captured["screen"]["f"] == "day"
+    assert captured["markup"].inline_keyboard[-1][0].text.startswith("↩️")
+
+
+async def test_a_first_tap_on_another_filter_just_applies_it(monkeypatch) -> None:
+    target = FileListCB(
+        action="filter",
+        view="category",
+        value="document",
+        period="week",
+        sort="newest",
+        page=1,
+        anchor=TODAY.isoformat(),
+    ).pack()
+
+    captured = await _navigate(
+        monkeypatch, file_list_router, target, screen("category", f="day")
+    )
+
+    assert captured["screen"]["f"] == "week"
+    assert captured["notice"] is None
+
+
+async def test_picking_a_period_opens_it(monkeypatch) -> None:
+    target = FileListCB(
+        action="anchor",
+        view="category",
+        value="document",
+        period="day",
+        sort="newest",
+        page=1,
+        anchor=OLDER_DAY.isoformat(),
+    ).pack()
+
+    captured = await _navigate(
+        monkeypatch, file_list_router, target, screen("category", f="day")
+    )
+
+    assert captured["screen"]["f"] == "day"
+    assert captured["screen"]["d"] == OLDER_DAY.isoformat()
+    assert captured["screen"]["p"] == 1
