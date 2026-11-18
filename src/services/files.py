@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
 from typing import Any
 
@@ -25,15 +25,87 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
 
-# The windows of «History uploads»: a span of days, or the whole archive.
-HISTORY_DAYS: dict[str, int] = {"day": 1, "week": 7, "month": 30, "year": 365}
+# «History uploads»: one period at a time, eight files per screen.
+HISTORY_PAGE_SIZE = 8
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
 
 def history_span(value: object) -> str:
-    """A requested history window, defaulting to the whole archive."""
+    """A requested history period, defaulting to today."""
     span = str(value or "").strip().lower()
-    return span if span in HISTORY_SPANS else "all"
+    return span if span in HISTORY_SPANS else "day"
+
+
+def history_date(value: object = None) -> date:
+    """The day a period is anchored on, defaulting to today (UTC).
+
+    The anchor is what the screen shows and what the filter buttons keep: a week
+    is the week around it, a month its month, and a day is the day itself.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc).date()
+
+
+def history_window(span: str, anchor: date) -> tuple[datetime | None, datetime | None]:
+    """The half-open UTC range ``[start, end)`` of a period, or ``(None, None)``.
+
+    The range is computed here and sent to PostgREST, so the slice and the count
+    always describe the same window without fetching the library first.
+    """
+    span = history_span(span)
+    if span == "day":
+        first, after = anchor, anchor + timedelta(days=1)
+    elif span == "week":
+        first = anchor - timedelta(days=anchor.weekday())
+        after = first + timedelta(days=7)
+    elif span == "month":
+        first = anchor.replace(day=1)
+        after = (first + timedelta(days=32)).replace(day=1)
+    elif span == "year":
+        first, after = date(anchor.year, 1, 1), date(anchor.year + 1, 1, 1)
+    else:
+        return None, None
+    return (
+        datetime.combine(first, time.min, tzinfo=timezone.utc),
+        datetime.combine(after, time.min, tzinfo=timezone.utc),
+    )
+
+
+@dataclass(frozen=True)
+class HistoryPage:
+    """One screen of «History uploads»: at most eight files of one period.
+
+    ``next_anchor`` / ``prev_anchor`` are the closest *older* / *newer* day that
+    still has files, found by the database: the navigation never walks empty days
+    one by one.
+    """
+
+    files: list[StoredFile]
+    total: int
+    page: int
+    pages: int
+    span: str
+    anchor: date
+    start: datetime | None = None
+    end: datetime | None = None
+    next_anchor: date | None = None
+    prev_anchor: date | None = None
+
+    @property
+    def older_page(self) -> int | None:
+        """The next page inside this period, when one is left."""
+        return self.page + 1 if self.page < self.pages else None
+
+    @property
+    def newer_page(self) -> int | None:
+        """The previous page inside this period, when one is left."""
+        return self.page - 1 if self.page > 1 else None
 
 
 def _is_duplicate(exc: SupabaseError) -> bool:
@@ -381,40 +453,76 @@ class FileStorageServices:
 
     async def history_page(
         self,
-        category: FileCategory | str | None = None,
-        span: str = "all",
+        span: str = "day",
+        target_date: object = None,
         *,
         page: int = 1,
-        per_page: int = 10,
-    ) -> tuple[list[StoredFile], int, int]:
-        """One page of «History uploads»: newest first, optionally narrowed.
+        per_page: int = HISTORY_PAGE_SIZE,
+    ) -> HistoryPage:
+        """One screen of «History uploads»: eight files of one period, newest first.
 
-        The archive spans the whole library, so the caller picks a category (or
-        none for every file) and a window of days; the newest file is always the
-        first row. Both the window and the slice run in the database so the last
-        page is reachable and the counters stay correct.
+        The window, the ``LIMIT``/``OFFSET`` slice and the count all run in the
+        database, so a page never holds more than ``per_page`` files and the last
+        page is always reachable. When the period is exhausted the nearest older
+        day with files is looked up for the «Next Day ⏭️» jump, and a page beyond
+        the start looks up the nearest newer day for «⏮️ Previous».
         """
-        parsed = parse_category(category) if category not in (None, "") else None
-        days = HISTORY_DAYS.get(history_span(span))
-        since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+        span = history_span(span)
+        anchor = history_date(target_date)
+        start, end = history_window(span, anchor)
         per_page = max(1, per_page)
         page = max(1, page)
 
         async def fetch(target: int) -> tuple[list[StoredFile], int]:
             return await self._repository.search(
-                category=parsed,
-                created_after=since,
+                created_after=start,
+                created_before=end,
                 limit=per_page,
                 offset=(target - 1) * per_page,
                 order="created_at.desc",
             )
 
         files, total = await fetch(page)
-        last_page = max(1, -(-total // per_page))
-        if not files and page > last_page:
-            page = last_page
+        pages = max(1, -(-total // per_page))
+        if not files and page > 1:
+            # The page came from an older screen (or a file was deleted): show the
+            # last page of the period instead of an empty one.
+            page = pages
             files, total = await fetch(page)
-        return files, total, page
+
+        next_anchor: date | None = None
+        prev_anchor: date | None = None
+        if start is not None and page >= pages:
+            next_anchor = await self._nearest_history_day(start, older=True)
+        if end is not None and page == 1:
+            prev_anchor = await self._nearest_history_day(end, older=False)
+
+        return HistoryPage(
+            files=files,
+            total=total,
+            page=page,
+            pages=pages,
+            span=span,
+            anchor=anchor,
+            start=start,
+            end=end,
+            next_anchor=next_anchor,
+            prev_anchor=prev_anchor,
+        )
+
+    async def _nearest_history_day(self, moment: datetime, *, older: bool) -> date | None:
+        """The day of the closest file before ``moment`` (or after it, inclusive).
+
+        One row is enough: jumping to a period only needs the day the next file was
+        uploaded on, and the database finds it without walking empty days.
+        """
+        files, _total = await self._repository.search(
+            created_after=None if older else moment,
+            created_before=moment if older else None,
+            limit=1,
+            order="created_at.desc" if older else "created_at.asc",
+        )
+        return files[0].created_at.date() if files else None
 
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
