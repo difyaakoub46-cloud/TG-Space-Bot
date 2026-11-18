@@ -480,6 +480,7 @@ class FileStorageServices:
         *,
         page: int = 1,
         per_page: int = FILES_PER_PAGE,
+        query: str | None = None,
     ) -> HistoryPage:
         """One screen of «History uploads»: eight files of one period, newest first.
 
@@ -488,6 +489,10 @@ class FileStorageServices:
         page is always reachable. When the period is exhausted the nearest older
         day with files is looked up for the «Next Day ⏭️» jump, and a page beyond
         the start looks up the nearest newer day for «⏮️ Previous».
+
+        A ``query`` narrows the very same window to the files whose names match it,
+        which is what makes «🔍 Search» the history screen with one extra field
+        instead of a second browser.
         """
         span = history_span(span)
         anchor = history_date(target_date)
@@ -497,6 +502,7 @@ class FileStorageServices:
 
         async def fetch(target: int) -> tuple[list[StoredFile], int]:
             return await self._repository.search(
+                query=query,
                 created_after=start,
                 created_before=end,
                 limit=per_page,
@@ -515,9 +521,13 @@ class FileStorageServices:
         next_anchor: date | None = None
         prev_anchor: date | None = None
         if start is not None and page >= pages:
-            next_anchor = await self._nearest_history_day(start, older=True)
+            next_anchor = await self._nearest_history_day(
+                start, older=True, query=query
+            )
         if end is not None and page == 1:
-            prev_anchor = await self._nearest_history_day(end, older=False)
+            prev_anchor = await self._nearest_history_day(
+                end, older=False, query=query
+            )
 
         return HistoryPage(
             files=files,
@@ -532,13 +542,17 @@ class FileStorageServices:
             prev_anchor=prev_anchor,
         )
 
-    async def _nearest_history_day(self, moment: datetime, *, older: bool) -> date | None:
+    async def _nearest_history_day(
+        self, moment: datetime, *, older: bool, query: str | None = None
+    ) -> date | None:
         """The day of the closest file before ``moment`` (or after it, inclusive).
 
         One row is enough: jumping to a period only needs the day the next file was
-        uploaded on, and the database finds it without walking empty days.
+        uploaded on, and the database finds it without walking empty days. A search
+        keeps its query, so a jump never lands on a day without a match.
         """
         files, _total = await self._repository.search(
+            query=query,
             created_after=None if older else moment,
             created_before=moment if older else None,
             limit=1,
@@ -576,6 +590,25 @@ class FileStorageServices:
     async def folders(self, user_id: int) -> list[Folder]:
         """Folders of one user, always in case-insensitive alphabetical order."""
         return await self._repository.list_folders(user_id)
+
+    async def search_folders(
+        self, query: str, user_id: int, limit: int = FILES_PER_PAGE
+    ) -> tuple[list[Folder], int]:
+        """The folders whose name contains ``query``, and how many there are.
+
+        A folder is a label, not a row of the file table, so its search runs here on
+        the user's (already alphabetical) list. The screen shows at most ``limit``
+        of them, keeping the eight-item rule of every list in the bot.
+        """
+        needle = " ".join(str(query or "").split()).casefold()
+        if not needle:
+            return [], 0
+        matched = [
+            folder
+            for folder in await self.folders(user_id)
+            if needle in folder.name.casefold()
+        ]
+        return matched[: max(1, limit)], len(matched)
 
     async def folder(self, folder_id: str, user_id: int) -> Folder | None:
         return await self._repository.get_folder(folder_id, user_id)
