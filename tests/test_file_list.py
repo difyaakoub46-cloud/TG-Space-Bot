@@ -22,8 +22,14 @@ from src.bot.routers import search as search_router
 from src.bot.states import SearchStates
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
-from src.services.files import FILES_PER_PAGE, FileStorageServices
+from src.db.repository import SupabaseError
+from src.services.files import (
+    FILES_PER_PAGE,
+    FileStorageServices,
+    history_window,
+)
 from src.utils.filetypes import FileCategory
+from src.utils.formatters import truncate_name
 
 UTC = timezone.utc
 TODAY = date(2026, 11, 18)
@@ -129,6 +135,30 @@ class ListRepository:
         ]
         rows.sort(key=lambda file: file.created_at, reverse=True)
         return [file.created_at for file in rows[offset : offset + limit]]
+
+    async def period_counts(
+        self,
+        *,
+        span: str = "day",
+        query: str | None = None,
+        category: FileCategory | None = None,
+        limit: int = 24,
+    ) -> list[tuple[date, int]]:
+        """Periods and their counts, as the grouped SQL function returns them."""
+        needle = (query or "").casefold()
+        rows = [
+            file
+            for file in self.files
+            if (not needle or needle in file.file_name.casefold())
+            and (category is None or file.category is category)
+        ]
+        rows.sort(key=lambda file: file.created_at, reverse=True)
+        buckets: dict[date, int] = {}
+        for file in rows:
+            start, _end = history_window(span, file.created_at.date())
+            anchor = start.date() if start is not None else file.created_at.date()
+            buckets[anchor] = buckets.get(anchor, 0) + 1
+        return sorted(buckets.items(), key=lambda item: item[0], reverse=True)[:limit]
 
 
 def service(
@@ -708,12 +738,18 @@ async def test_the_quick_jump_names_the_active_period(
 async def test_the_picker_offers_only_periods_that_hold_a_matching_file() -> None:
     library = service(documents(1) + [record(100, moment(OLDER_DAY))])
 
+    # Every period comes with its own file count, from the same query.
     assert await library.available_periods(
         "category", "document", span="day"
-    ) == [TODAY, OLDER_DAY]
+    ) == [(TODAY, 1), (OLDER_DAY, 1)]
+    # 15 November is the Sunday of the previous week, so the week counts split.
+    assert await library.available_periods(
+        "category", "document", span="week"
+    ) == [(WEEK_DAY, 1), (date(2026, 11, 9), 1)]
+    # A month is one period, anchored on its first day, with both files counted.
     assert await library.available_periods(
         "category", "document", span="month"
-    ) == [TODAY]
+    ) == [(date(2026, 11, 1), 2)]
     # «All time» is a single period: it has no picker.
     assert await library.available_periods("category", "document", span="all") == []
 
@@ -723,7 +759,40 @@ async def test_the_picker_offers_only_periods_that_hold_a_matching_file() -> Non
     # The picker keeps the view's filter, so a search offers only its own days.
     assert await search_library.available_periods(
         "search", "holiday", span="day"
-    ) == [WEEK_DAY]
+    ) == [(WEEK_DAY, 1)]
+
+
+async def test_the_picker_falls_back_to_folded_dates(monkeypatch) -> None:
+    library = service(documents(2) + [record(100, moment(OLDER_DAY))])
+
+    async def unavailable(**_kwargs):
+        raise SupabaseError("POST rpc/files_periods failed with 404")
+
+    # Before migration 009 is applied the picker still works: the dates are read
+    # in batches and folded here, with the same counts.
+    monkeypatch.setattr(library._repository, "period_counts", unavailable)
+
+    assert await library.available_periods(
+        "category", "document", span="day"
+    ) == [(TODAY, 2), (OLDER_DAY, 1)]
+
+
+async def test_a_long_file_name_is_cut_in_the_middle_of_the_button() -> None:
+    long_name = "tg-space-bot-deploy-7e9a560-2026-11-15-1432.log"
+    library = service([record(1, moment(TODAY, 19, 25), long_name, size=21 * 1024)])
+
+    _text, markup = await navigation.build(SimpleNamespace(files=library), screen())
+
+    labels = [
+        button.text
+        for row in markup.inline_keyboard
+        for button in row
+        if button.text.startswith("📄 ")
+    ]
+    # First 12 characters, «...», last 8: the button stays on one line.
+    assert labels == ["📄 tg-space-bot...1432.log - 21.0 KB - 19:25"]
+    # A name that already fits is shown as it is.
+    assert truncate_name("photo_AQA.jpg") == "photo_AQA.jpg"
 
 
 async def test_a_second_tap_on_the_active_filter_opens_the_picker(monkeypatch) -> None:
@@ -757,7 +826,7 @@ async def test_a_second_tap_on_the_active_filter_opens_the_picker(monkeypatch) -
     labels = [
         button.text for row in captured["markup"].inline_keyboard for button in row
     ]
-    assert labels[:2] == ["✅ 2026-11-18", "2026-11-15"]
+    assert labels[:2] == ["✅ 2026-11-18 · 2", "2026-11-15 · 1"]
     # The picker sits on the same list, on the same page, with a way back to it.
     assert captured["screen"]["f"] == "day"
     assert captured["markup"].inline_keyboard[-1][0].text.startswith("↩️")
