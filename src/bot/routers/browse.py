@@ -11,12 +11,12 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from src.bot import navigation, views
+from src.bot import file_list, navigation, views
+from src.bot.file_list import FileListContext
 from src.bot.keyboards import (
     LIBRARY_TEXTS,
     CategoryCB,
     FileCB,
-    HistoryCB,
     MenuCB,
     SavedCB,
     delete_confirm_kb,
@@ -24,7 +24,6 @@ from src.bot.keyboards import (
 from src.bot.states import RenameStates
 from src.core.i18n import pick
 from src.services.container import Services
-from src.services.files import history_date, history_span
 from src.utils.filetypes import parse_category
 
 logger = logging.getLogger(__name__)
@@ -62,60 +61,6 @@ async def categories_callback(
     )
 
 
-@router.callback_query(MenuCB.filter(F.action == "history"))
-async def menu_history_callback(
-    callback: CallbackQuery, services: Services, state: FSMContext, bot
-) -> None:
-    """Open «📂 History uploads» on today, the first period filter."""
-    await views.reset_flow(state)
-    await navigation.navigate_callback(
-        callback,
-        state,
-        bot,
-        services,
-        {"k": "history", "f": "day", "d": history_date().isoformat()},
-    )
-
-
-@router.callback_query(HistoryCB.filter())
-async def history_callback(
-    callback: CallbackQuery, services: Services, state: FSMContext, bot
-) -> None:
-    """Open a period, turn its pages or jump to the nearest day with files.
-
-    The callback carries the whole position (action, filter, target date and page),
-    so the new screen is rebuilt from the tap alone: a filter tap restarts on page
-    one, a page tap keeps the day, and a jump only changes the anchor day.
-    """
-    try:
-        data = HistoryCB.unpack(callback.data)
-    except (TypeError, ValueError):
-        # A button left over from the older screen: open the first period instead
-        # of failing the tap.
-        data = HistoryCB(action="filter")
-    try:
-        page = max(1, int(data.page_number or 1))
-    except (TypeError, ValueError):
-        page = 1
-
-    # «🔍 Search» keeps this very screen: its filters, pages and date jumps are the
-    # history ones, and its query has to survive every tap.
-    stored = dict((await state.get_data()).get("screen_key") or {})
-    searching = stored.get("k") == "search"
-    screen: dict[str, object] = {
-        "k": "search" if searching else "history",
-        "f": history_span(data.filter_type),
-        "d": history_date(data.target_date).isoformat(),
-        "p": page,
-    }
-    if searching:
-        screen["u"] = int(callback.from_user.id)
-        screen["q"] = str(stored.get("q") or "")
-    await navigation.navigate_callback(
-        callback, state, bot, services, screen, push=False
-    )
-
-
 @router.callback_query(SavedCB.filter())
 async def saved_step_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
@@ -147,25 +92,26 @@ async def saved_step_callback(
 async def category_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Open a category; the page is kept in the screen key, not in the button."""
+    """Open a category in the shared file list, with no query to type.
+
+    Opening a category remembers the library behind it, so «↩️ Back» walks
+    file → category list → library. Coming back to the same category keeps the
+    filter, the ordering and the page it was left on.
+    """
     data = CategoryCB.unpack(callback.data)
     category = parse_category(data.name)
-    stored = dict((await state.get_data()).get("screen_key") or {})
-    # Opening a category remembers the library behind it, so «↩️ Back» walks
-    # file → category file list → library. Turning a page stays on the same list
-    # and must not stack the library over and over.
-    paging = stored.get("k") == "category" and stored.get("name") == category.value
+    user_id = int(callback.from_user.id)
+    stored = FileListContext.from_screen(
+        (await state.get_data()).get("screen_key") or {}
+    )
+    paging = stored.view == "category" and stored.value == category.value
+    screen = (
+        stored.to_screen({"u": user_id})
+        if paging
+        else file_list.new_screen("category", category.value, user_id)
+    )
     await navigation.navigate_callback(
-        callback,
-        state,
-        bot,
-        services,
-        {
-            "k": "category",
-            "name": category.value,
-            "p": max(1, int(data.page or 1)),
-        },
-        push=not paging,
+        callback, state, bot, services, screen, push=not paging
     )
 
 

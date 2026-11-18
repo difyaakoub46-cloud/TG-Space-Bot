@@ -1,8 +1,8 @@
-"""Text builders for the upload result and the upload history.
+"""Text builders for the upload result and the shared file-list header.
 
-The two screens arrived later than the library ones, so their text lives here
-instead of growing :mod:`src.bot.views` any further. Every string still goes
-through :func:`src.core.i18n.pick`, so both languages stay side by side.
+These arrived later than the library ones, so their text lives here instead of
+growing :mod:`src.bot.views` any further. Every string still goes through
+:func:`src.core.i18n.pick`, so both languages stay side by side.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from src.db.models import StoredFile
 from src.utils.formatters import format_number
 
 if TYPE_CHECKING:
-    from src.services.files import HistoryPage
+    from src.services.files import FileListPage
 
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
@@ -28,7 +28,7 @@ def _escape(value: object) -> str:
 
 
 def history_span_label(span: str) -> str:
-    """The period filters of «History uploads», in the active language."""
+    """The period filters of the list, in the active language."""
     return {
         "day": pick("📅 Today", "📅 اليوم"),
         "week": pick("📅 This Week", "📅 هذا الأسبوع"),
@@ -46,7 +46,7 @@ def _period_range(first: date, last: date) -> str:
     )
 
 
-def history_period_label(page: HistoryPage) -> str:
+def history_period_label(page: FileListPage) -> str:
     """The period on screen, e.g. «📅 Today: 2026-11-18» or the week's range.
 
     Only the current period is written out: the filters live on the buttons, so
@@ -253,28 +253,4 @@ def saved_batch_text(
             ),
         ]
     )
-    return "\n".join(lines)
-
-
-def history_text(page: HistoryPage) -> str:
-    """The archive screen: only its title, the period on screen and its files.
-
-    The files are buttons, so the message stays clean: no “Newest first”, no
-    category labels, no counters and no “Page x of y”. The period line is the only
-    context kept, and an empty period says so instead of listing nothing.
-    """
-    lines = [
-        pick("📂 <b>History uploads</b>", "📂 <b>سجل الرفع</b>"),
-        _escape(history_period_label(page)),
-    ]
-    if not page.files:
-        lines.extend(
-            [
-                "",
-                pick(
-                    "No uploads in this period.",
-                    "لا توجد ملفات في هذه الفترة.",
-                ),
-            ]
-        )
     return "\n".join(lines)
