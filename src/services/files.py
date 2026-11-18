@@ -19,16 +19,25 @@ from src.db.repository import FileRepository, SupabaseError
 from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
-from src.utils.sorting import SortSpec, database_order, sort_files
+from src.utils.sorting import (
+    SortSpec,
+    database_order,
+    normalise_sort,
+    sort_files,
+    sort_from_key,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
 
-# One screen of a file list, everywhere: a category, a folder, the search
-# results and «History uploads» all show eight files at most.
+# One screen of a file list, everywhere: a category, a folder and the shared
+# list all show eight files at most.
 FILES_PER_PAGE = 8
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
+
+# The two ways into the shared file list: a typed query or a library category.
+LIST_VIEWS: tuple[str, ...] = ("search", "category")
 
 
 def history_span(value: object) -> str:
@@ -79,19 +88,24 @@ def history_window(span: str, anchor: date) -> tuple[datetime | None, datetime |
 
 
 @dataclass(frozen=True)
-class HistoryPage:
-    """One screen of «History uploads»: at most eight files of one period.
+class FileListPage:
+    """One screen of the shared file list: at most eight files of one period.
 
-    ``next_anchor`` / ``prev_anchor`` are the closest *older* / *newer* day that
-    still has files, found by the database: the navigation never walks empty days
-    one by one.
+    The page is a window on the *whole* result of the view's filter, never a
+    window on a fetched prefix: the ordering and the slice are applied by the
+    database. ``next_anchor`` / ``prev_anchor`` are the closest *older* / *newer*
+    day that still has files for the same view, found by the database, so the
+    navigation never walks empty days one by one.
     """
 
     files: list[StoredFile]
     total: int
     page: int
     pages: int
+    view: str
+    value: str
     span: str
+    sort: str
     anchor: date
     start: datetime | None = None
     end: datetime | None = None
@@ -473,41 +487,53 @@ class FileStorageServices:
         start = (page - 1) * per_page
         return files[start : start + per_page], len(files), page
 
-    async def history_page(
+    async def file_list_page(
         self,
-        span: str = "day",
-        target_date: object = None,
+        view: str = "search",
+        value: str = "",
         *,
+        span: str = "all",
+        sort: str = "newest",
+        anchor: object = None,
         page: int = 1,
         per_page: int = FILES_PER_PAGE,
-        query: str | None = None,
-    ) -> HistoryPage:
-        """One screen of «History uploads»: eight files of one period, newest first.
+    ) -> FileListPage:
+        """One page of the shared file list, for either entry point.
 
-        The window, the ``LIMIT``/``OFFSET`` slice and the count all run in the
-        database, so a page never holds more than ``per_page`` files and the last
-        page is always reachable. When the period is exhausted the nearest older
-        day with files is looked up for the «Next Day ⏭️» jump, and a page beyond
-        the start looks up the nearest newer day for «⏮️ Previous».
+        ``view`` says where the list came from: ``category`` filters the rows by
+        their category, ``search`` by a name fragment. Both then go through the
+        same query — the period becomes the ``WHERE created_at`` window, the sort
+        the ``ORDER BY``, and the page the ``LIMIT``/``OFFSET`` slice — so the
+        ordering and the filter always cover the whole list before pagination.
 
-        A ``query`` narrows the very same window to the files whose names match it,
-        which is what makes «🔍 Search» the history screen with one extra field
-        instead of a second browser.
+        When a period is exhausted the nearest older day with a file of the same
+        view is looked up for the «Next Day ⏭️» jump, and a page beyond the start
+        looks up the nearest newer day for «⏮️ Previous».
         """
-        span = history_span(span)
-        anchor = history_date(target_date)
+        view = str(view or "search")
+        view = view if view in LIST_VIEWS else "search"
+        value = " ".join(str(value or "").split())
+        span = span if str(span or "") in HISTORY_SPANS else "all"
+        sort = normalise_sort(sort)
+        anchor = history_date(anchor)
         start, end = history_window(span, anchor)
         per_page = max(1, per_page)
         page = max(1, page)
 
+        # The view's own WHERE clause, shared by the page and the day jumps.
+        query = value if view == "search" and value else None
+        category = parse_category(value) if view == "category" and value else None
+        order = database_order(sort_from_key(sort))
+
         async def fetch(target: int) -> tuple[list[StoredFile], int]:
             return await self._repository.search(
                 query=query,
+                category=category,
                 created_after=start,
                 created_before=end,
                 limit=per_page,
                 offset=(target - 1) * per_page,
-                order="created_at.desc",
+                order=order,
             )
 
         files, total = await fetch(page)
@@ -522,19 +548,22 @@ class FileStorageServices:
         prev_anchor: date | None = None
         if start is not None and page >= pages:
             next_anchor = await self._nearest_history_day(
-                start, older=True, query=query
+                start, older=True, query=query, category=category
             )
         if end is not None and page == 1:
             prev_anchor = await self._nearest_history_day(
-                end, older=False, query=query
+                end, older=False, query=query, category=category
             )
 
-        return HistoryPage(
+        return FileListPage(
             files=files,
             total=total,
             page=page,
             pages=pages,
+            view=view,
+            value=value,
             span=span,
+            sort=sort,
             anchor=anchor,
             start=start,
             end=end,
@@ -543,16 +572,22 @@ class FileStorageServices:
         )
 
     async def _nearest_history_day(
-        self, moment: datetime, *, older: bool, query: str | None = None
+        self,
+        moment: datetime,
+        *,
+        older: bool,
+        query: str | None = None,
+        category: FileCategory | None = None,
     ) -> date | None:
         """The day of the closest file before ``moment`` (or after it, inclusive).
 
         One row is enough: jumping to a period only needs the day the next file was
-        uploaded on, and the database finds it without walking empty days. A search
-        keeps its query, so a jump never lands on a day without a match.
+        uploaded on, and the database finds it without walking empty days. The
+        view's own filter is kept, so a jump never lands on a day without a match.
         """
         files, _total = await self._repository.search(
             query=query,
+            category=category,
             created_after=None if older else moment,
             created_before=moment if older else None,
             limit=1,
