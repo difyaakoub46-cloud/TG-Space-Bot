@@ -18,16 +18,10 @@ import logging
 
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from src.bot import library_views, views
 from src.bot.keyboards import (
-    MenuCB,
     back_to_menu_kb,
     categories_kb,
     category_files_kb,
@@ -63,30 +57,6 @@ MAX_TRAIL = 20
 JOIN_FALLBACK = "fallback"
 
 MAIN: dict[str, object] = {"k": "main"}
-
-
-def _with_keep_sent_row(
-    markup: InlineKeyboardMarkup, keep: bool = False
-) -> InlineKeyboardMarkup:
-    """Add the «🗂 Keep the opened files» row under the saved-screen toggle."""
-    rows = [list(buttons) for buttons in markup.inline_keyboard]
-    row = [
-        InlineKeyboardButton(
-            text=library_views.keep_sent_label(keep),
-            callback_data=MenuCB(action="toggle_keep_sent").pack(),
-        )
-    ]
-    saved = MenuCB(action="toggle_saved").pack()
-    position = next(
-        (
-            index + 1
-            for index, buttons in enumerate(rows)
-            if any(button.callback_data == saved for button in buttons)
-        ),
-        max(0, len(rows) - 1),
-    )
-    rows.insert(position, row)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _page(screen: dict[str, object]) -> int:
@@ -205,7 +175,7 @@ async def build(
             views.settings_text()
             + library_views.saved_screen_settings_text(show_saved)
             + library_views.keep_sent_settings_text(keep_sent),
-            _with_keep_sent_row(settings_kb(show_saved), keep_sent),
+            settings_kb(show_saved, keep_sent),
         )
 
     if kind == "saved":
@@ -376,22 +346,25 @@ async def clear_delivered(
     """
     data = await state.get_data()
     ids = [int(mid) for mid in (data.get("delivered_ids") or []) if mid]
-    await state.update_data(delivered_ids=[])
-    if keep or not ids or not chat_id:
-        return
-    for message_id in ids:
-        await views.delete_screen_message(bot, chat_id, message_id)
+    update: dict[str, object] = {"delivered_ids": []}
+    if not keep and ids and chat_id:
+        # The copy is already tracked for the main menu; forget it there too so
+        # the wipe does not try to delete the same message a second time.
+        removed = set(ids)
+        tracked = [int(mid) for mid in (data.get("cleanup_ids") or []) if mid]
+        update["cleanup_ids"] = [mid for mid in tracked if mid not in removed]
+        for message_id in ids:
+            await views.delete_screen_message(bot, chat_id, message_id)
+    await state.update_data(**update)
 
 
 async def go_back(
     callback: CallbackQuery, state: FSMContext, services: Services
 ) -> None:
     """Return to the previous screen, removing the opened copies when asked to."""
-    data = await state.get_data()
-
     # A file opened with «📤 Send» is a normal chat message, so it must be removed
     # here: «↩️ Back» used to leave it behind even after returning to the library.
-    user_id = int(callback.from_user.id) if callback.from_user is not None else None
+    user_id = callback.from_user.id if callback.from_user is not None else None
     if callback.message is not None:
         await clear_delivered(
             callback.bot,
@@ -400,6 +373,7 @@ async def go_back(
             keep=services.preferences.keep_sent_files(user_id),
         )
 
+    data = await state.get_data()
     trail = [dict(entry) for entry in data.get("trail") or []]
     target = trail.pop() if trail else dict(MAIN)
     await state.update_data(trail=trail)
