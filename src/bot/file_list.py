@@ -3,7 +3,8 @@
 «🔍 Search» and a library category are the same list with a different *view*: the
 first narrows the files by a typed name, the second by their category. Everything
 else — the eight files a page, the five period filters, the six orderings, the
-page turns and the smart day jumps — is written once here and shared.
+page turns, the quick period jump and the period picker — is written once here and
+shared.
 
 The screen key holds the whole position so a rebuild needs nothing else::
 
@@ -19,7 +20,7 @@ from __future__ import annotations
 import html
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -27,11 +28,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
 from src.bot.keyboards import FileCB, FolderCB, nav_row
-from src.bot.library_views import (
-    HISTORY_SPANS,
-    history_period_label,
-    history_span_label,
-)
+from src.bot.library_views import history_period_label
 from src.core.i18n import pick
 from src.db.models import Folder
 from src.services.files import FileListPage, history_date
@@ -39,6 +36,17 @@ from src.utils.formatters import format_number
 from src.utils.sorting import sort_from_key
 
 VIEWS: tuple[str, ...] = ("search", "category")
+
+# The five filters in one row: «All time» first, then the growing periods.
+_FILTERS: tuple[str, ...] = ("all", "day", "week", "month", "year")
+
+_FILTER_LABELS: dict[str, tuple[str, str]] = {
+    "all": ("📁 All time", "📁 كل الوقت"),
+    "day": ("📅 Day", "📅 يوم"),
+    "week": ("📅 Week", "📅 أسبوع"),
+    "month": ("📅 Month", "📅 شهر"),
+    "year": ("📅 Year", "📅 سنة"),
+}
 
 # A callback is capped at 64 bytes by Telegram; the typed query can be longer, so
 # only its beginning travels in the button and the full text is recovered from the
@@ -278,48 +286,76 @@ def _folder_label(folder: Folder) -> str:
     return f"📁 {name} ({format_number(folder.count)})"
 
 
-def _jump_label(span: str, *, older: bool) -> str:
+def _jump_label(span: str) -> str:
     """«Next Day ⏭️» and friends, matching the active period filter."""
-    labels = {
-        "day": ("Next Day ⏭️", "اليوم التالي ⏭️", "⏮️ Previous Day", "⏮️ اليوم السابق"),
-        "week": ("Next Week ⏭️", "الأسبوع التالي ⏭️", "⏮️ Previous Week", "⏮️ الأسبوع السابق"),
-        "month": ("Next Month ⏭️", "الشهر التالي ⏭️", "⏮️ Previous Month", "⏮️ الشهر السابق"),
-        "year": ("Next Year ⏭️", "السنة التالية ⏭️", "⏮️ Previous Year", "⏮️ السنة السابقة"),
-    }.get(span, ("Next ▶️", "التالي ▶️", "⏮️ Previous", "⏮️ السابق"))
-    index = 0 if older else 2
-    return pick(labels[index], labels[index + 1])
+    return {
+        "day": pick("Next Day ⏭️", "اليوم التالي ⏭️"),
+        "week": pick("Next Week ⏭️", "الأسبوع التالي ⏭️"),
+        "month": pick("Next Month ⏭️", "الشهر التالي ⏭️"),
+        "year": pick("Next Year ⏭️", "السنة التالية ⏭️"),
+    }.get(span, pick("Next ⏭️", "التالي ⏭️"))
 
 
-def _controls(ctx: FileListContext, page: FileListPage) -> list[InlineKeyboardButton]:
-    """Previous / next: within the period first, then to the closest day."""
-    buttons: list[InlineKeyboardButton] = []
-    if page.newer_page is not None:
-        buttons.append(
-            InlineKeyboardButton(
-                text=pick("◀ Previous", "◀ السابق"),
-                callback_data=callback_data(ctx, page=page.newer_page),
-            )
-        )
-    elif page.prev_anchor is not None:
-        buttons.append(
-            InlineKeyboardButton(
-                text=_jump_label(page.span, older=False),
-                callback_data=callback_data(ctx, page=1, anchor=page.prev_anchor),
-            )
-        )
+def _filter_buttons(
+    ctx: FileListContext, page: FileListPage
+) -> list[InlineKeyboardButton]:
+    """The five period filters, side by side in one row.
 
-    if page.older_page is not None:
-        buttons.append(
-            InlineKeyboardButton(
-                text=pick("Next ▶", "التالي ▶"),
-                callback_data=callback_data(ctx, page=page.older_page),
-            )
+    A tap applies the filter; tapping the filter that is already active opens the
+    period picker instead, because the same filter pressed twice asks for a date.
+    """
+    return [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if span == page.span else ''}{pick(*_FILTER_LABELS[span])}",
+            callback_data=FileListCB(
+                action="filter",
+                view=ctx.view,
+                value=ctx.value[:_MAX_CALLBACK_VALUE],
+                period=span,
+                sort=ctx.sort,
+                page=1,
+                anchor=page.anchor.isoformat(),
+            ).pack(),
         )
-    elif page.next_anchor is not None:
+        for span in _FILTERS
+    ]
+
+
+def _controls(
+    ctx: FileListContext, page: FileListPage
+) -> list[InlineKeyboardButton]:
+    """Previous / next page, then the quick jump to the closest older period.
+
+    «Previous» always stays in the row so the layout never shifts; on the first
+    page it is inert, and so is «Next» on the last page of the period.
+    """
+    buttons = [
+        InlineKeyboardButton(
+            text=pick("◀️ Previous", "◀️ السابق"),
+            callback_data=(
+                callback_data(ctx, page=page.newer_page)
+                if page.newer_page is not None
+                else FileListCB(action="noop").pack()
+            ),
+        ),
+        InlineKeyboardButton(
+            text=pick("Next ▶️", "التالي ▶️"),
+            callback_data=(
+                callback_data(ctx, page=page.older_page)
+                if page.older_page is not None
+                else FileListCB(action="noop").pack()
+            ),
+        ),
+    ]
+    if page.span != "all":
         buttons.append(
             InlineKeyboardButton(
-                text=_jump_label(page.span, older=True),
-                callback_data=callback_data(ctx, page=1, anchor=page.next_anchor),
+                text=_jump_label(page.span),
+                callback_data=(
+                    callback_data(ctx, page=1, anchor=page.next_anchor)
+                    if page.next_anchor is not None
+                    else FileListCB(action="noop").pack()
+                ),
             )
         )
     return buttons
@@ -333,24 +369,8 @@ def file_list_kb(
     """Filters, up to eight files, the page controls, sorting and the menu row."""
     builder = InlineKeyboardBuilder()
 
-    filters = [
-        InlineKeyboardButton(
-            text=f"{'✅ ' if span == page.span else ''}{history_span_label(span)}",
-            callback_data=FileListCB(
-                action="open",
-                view=ctx.view,
-                value=ctx.value[:_MAX_CALLBACK_VALUE],
-                period=span,
-                sort=ctx.sort,
-                page=1,
-                anchor=page.anchor.isoformat(),
-            ).pack(),
-        )
-        for span in HISTORY_SPANS
-    ]
-    # The filters stay one group on top, split 3 + 2 so the labels stay readable.
-    builder.row(*filters[:3])
-    builder.row(*filters[3:])
+    # The five period filters share one row on top of the list.
+    builder.row(*_filter_buttons(ctx, page))
 
     for file in page.files:
         builder.row(
@@ -388,6 +408,80 @@ def file_list_kb(
         )
 
     builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def _period_option_label(span: str, anchor: date, *, active: bool) -> str:
+    """One picker button: the day itself, a week's range, a month or a year."""
+    if span == "week":
+        first = anchor - timedelta(days=anchor.weekday())
+        last = first + timedelta(days=6)
+        text = f"{first:%d %b} – {last:%d %b}"
+    elif span == "month":
+        text = f"{anchor:%Y-%m}"
+    elif span == "year":
+        text = f"{anchor:%Y}"
+    else:
+        text = anchor.isoformat()
+    return f"{'✅ ' if active else ''}{text}"
+
+
+def period_picker_text(ctx: FileListContext, anchors: Sequence[date]) -> str:
+    """The picker panel: the periods that actually hold a file."""
+    unit = {
+        "week": pick("week", "أسبوع"),
+        "month": pick("month", "شهر"),
+        "year": pick("year", "سنة"),
+    }.get(ctx.period, pick("day", "يوم"))
+    lines = [
+        pick("📅 <b>Pick a period</b>", "📅 <b>اختر فترة</b>"),
+        "",
+        pick(
+            f"Every {unit} that holds files, newest first. Pick one to jump "
+            "straight to it; the one on screen is marked ✅.",
+            f"كل {unit} فيه ملفات، الأحدث أولاً. اختر واحدة للانتقال إليها "
+            "مباشرة؛ الفترة المعروضة معلّمة ✅.",
+        ),
+    ]
+    if not anchors:
+        lines.extend(
+            [
+                "",
+                pick(
+                    "There are no files to pick from.",
+                    "لا توجد ملفات للاختيار منها.",
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def period_picker_kb(
+    ctx: FileListContext, anchors: Sequence[date]
+) -> InlineKeyboardMarkup:
+    """The period grid, two buttons a row, above a way back to the list."""
+    builder = InlineKeyboardBuilder()
+    for anchor in anchors:
+        builder.button(
+            text=_period_option_label(ctx.period, anchor, active=anchor == ctx.anchor),
+            callback_data=FileListCB(
+                action="anchor",
+                view=ctx.view,
+                value=ctx.value[:_MAX_CALLBACK_VALUE],
+                period=ctx.period,
+                sort=ctx.sort,
+                page=1,
+                anchor=anchor.isoformat(),
+            ).pack(),
+        )
+    if anchors:
+        builder.adjust(2)
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("↩️ Back to the list", "↩️ رجوع إلى القائمة"),
+            callback_data=callback_data(ctx, "back"),
+        )
+    )
     return builder.as_markup()
 
 
@@ -452,6 +546,8 @@ __all__ = [
     "file_list_kb",
     "file_list_text",
     "new_screen",
+    "period_picker_kb",
+    "period_picker_text",
     "screen",
     "sort_menu_kb",
     "sort_menu_text",
