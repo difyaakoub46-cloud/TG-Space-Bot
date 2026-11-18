@@ -103,11 +103,12 @@ search flow render that same message with `edit_message_text` through
 The only extra messages are the upload status bubble and copies explicitly
 requested with the «Send» button.
 
-Callback data is typed with `CallbackData` factories in `src/bot/keyboards.py`
-(`MenuCB`, `CategoryCB`, `FileCB`, `SearchCB`, `FolderCB`, `JoinCB`, `SortCB`), so
-routers filter and unpack it instead of parsing raw strings. Screens are rebuilt
-from a small JSON key by `src/bot/navigation.py`, which is what lets «↩️ Back»
-return to the previous screen (the trail lives in the FSM data).
+Callback data is typed with `CallbackData` factories (`MenuCB`, `CategoryCB`,
+`FileCB`, `FolderCB`, `JoinCB`, `SortCB` in `src/bot/keyboards.py`, and `FileListCB`
+beside the component it belongs to), so routers filter and unpack it instead of
+parsing raw strings. Screens are rebuilt from a small JSON key by
+`src/bot/navigation.py`, which is what lets «↩️ Back» return to the previous screen
+(the trail lives in the FSM data).
 
 ## Menu
 
@@ -126,16 +127,33 @@ status screen, so «Back» returns there instead of jumping to the main menu. Th
 status screen itself keeps one line about the rights (all, some, or none); the
 per-group detail lives only in «🛡 Group permissions».
 
-## Search and history
+## The shared file list
 
-«🔍 Search» is not a second browser: it opens the upload history itself — the
-period filters (today, this week, this month, this year, all time), eight files per
-page, «Next ▶» inside the period and «Next Day/Week/Month ⏭» at its end, jumping
-to the nearest day that actually holds files. What it adds is the text box:
-anything typed there narrows that same history to the files whose names match,
-while the user's folders whose names match are offered under the file buttons.
-«✖️ Clear search» puts the plain history back without leaving the screen, and
-«📂 History uploads» in the library is the same screen without the text field.
+«🔍 Search» and a library category are two entry points into one component,
+`src/bot/file_list.py`. The first passes a typed query, the second the category
+name; the screen itself is written once: eight files a page, the five period
+filters (today, this week, this month, this year, all time), six orderings
+(newest, oldest, smallest, largest, A→Z, Z→A) on a panel of their own, «Previous ▶»
+inside the period and «Next Day/Week/Month ⏭» at its end, jumping to the nearest
+day that actually holds files. The date of the period is the first line under the
+title.
+
+Filtering and ordering cover the whole list before the slice: `view` becomes the
+`WHERE` clause (`category=eq.…` or `file_name=ilike.*…*`), the period the
+`created_at` window, the sort the `ORDER BY`, and the page the `LIMIT 8` /
+`OFFSET 8 × (page-1)`. A page is therefore a window on the whole result, never on
+a fetched prefix, so the last file is reachable and the sort is not limited to the
+rows already shown.
+
+Typing on the search list narrows it; the user's folders whose names match appear
+under the file buttons, and «✖️ Clear search» drops the query without leaving the
+screen. There is no separate «History uploads» screen any more: opening Search
+with nothing typed is that list, with its filters and its sorting.
+
+Every button carries the whole position in `FileListCB` — `view` (`search` or
+`category`), `value` (the query or the category name), `period`, `sort`, `page` and
+the anchor day — so a tap rebuilds the list from itself. A long query travels
+truncated in the callback and is recovered from the screen key it was typed on.
 
 ## Languages
 
@@ -152,21 +170,21 @@ in either language.
 
 ## Sorting and paging
 
-Inside a library category or a folder, «🔃 Sort» opens a panel with size,
-date and name orderings in both directions (the active one is marked ✅). The
-choice is kept in the screen key (`s` / `d`), so it survives opening a file and
-coming back, and the list is re-rendered with `edit_message_text`.
+Inside a folder, «🔃 Sort» opens a panel with size, date and name orderings in
+both directions (the active one is marked ✅). The choice is kept in the screen key
+(`s` / `d`), so it survives opening a file and coming back, and the list is
+re-rendered with `edit_message_text`. The shared file list has its own sorting
+panel (`srt` in its screen key), which applies the ordering to the whole list in
+the database.
 
-A category is paged eight files at a time, and both the ordering and the slice are
-done by PostgREST, so the sort covers every file in the category and the last file
-of the library is reachable. The page lives in the screen key (`p`) next to the
-ordering, so opening a file and going back returns to the same page; changing the
-ordering restarts at page one because the pages are renumbered. Folder files,
-«🔍 Search» (which is «History uploads» plus a query) are paged at eight files
-too; a folder is
-sorted in memory (names are compared without Arabic diacritics and with the
-alef/ya variants folded) and then sliced, so its page turns keep the ordering.
-Folder listings are short enough to be sorted in memory as well.
+Both the shared list and the folders are paged eight files at a time. In the list
+the ordering and the slice are done by PostgREST, so the sort covers every entry
+and the last file is reachable; the page lives in its screen key (`p`), so opening
+a file and going back returns to the same page, and changing the ordering restarts
+at page one because the pages are renumbered. A folder is sorted in memory (names
+are compared without Arabic diacritics and with the alef/ya variants folded) and
+then sliced, so its page turns keep the ordering. Folder listings are short enough
+to be sorted in memory as well.
 
 ## Files, duplicates and hashes
 
@@ -236,8 +254,8 @@ because of a database hiccup.
 - `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
   (leave empty to allow everybody).
 - `PAGE_SIZE` — folders per page in the folder list (default `10`, capped at
-  `20`). Category, folder, search and history file lists always show eight files
-  per page.
+  `20`). The shared file list and a folder's files always show eight files per
+  page.
 - `TG_STORAGE_CHAT_FALLBACK` — the emergency group (for example the group named
   `TG-Storage-Chat-Fallback`): every file whose registration in Supabase fails is
   copied here instead of the library, and «🔧 Repair» moves it to its real group
