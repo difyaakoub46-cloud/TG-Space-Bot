@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
 
-# «History uploads»: one period at a time, eight files per screen.
-HISTORY_PAGE_SIZE = 8
+# One screen of a file list, everywhere: a category, a folder, the search
+# results and «History uploads» all show eight files at most.
+FILES_PER_PAGE = 8
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
 
@@ -420,7 +421,7 @@ class FileStorageServices:
         sort: SortSpec | None = None,
         *,
         page: int = 1,
-        per_page: int = 10,
+        per_page: int = FILES_PER_PAGE,
     ) -> tuple[list[StoredFile], int, int]:
         """One page of a category: its files, the total, and the page shown.
 
@@ -451,13 +452,34 @@ class FileStorageServices:
             files, total = await fetch(page)
         return files, total, page
 
+    async def folder_page(
+        self,
+        folder_id: str,
+        sort: SortSpec | None = None,
+        *,
+        page: int = 1,
+        per_page: int = FILES_PER_PAGE,
+    ) -> tuple[list[StoredFile], int, int]:
+        """One page of a folder: its eight files, the total and the page shown.
+
+        A folder is sorted in memory (names are compared with the Arabic
+        diacritics folded), so the slice is taken from the whole sorted list and
+        the screen never shows more than ``per_page`` files.
+        """
+        files = await self.folder_files(folder_id, sort)
+        per_page = max(1, per_page)
+        pages = max(1, -(-len(files) // per_page))
+        page = min(max(1, page), pages)
+        start = (page - 1) * per_page
+        return files[start : start + per_page], len(files), page
+
     async def history_page(
         self,
         span: str = "day",
         target_date: object = None,
         *,
         page: int = 1,
-        per_page: int = HISTORY_PAGE_SIZE,
+        per_page: int = FILES_PER_PAGE,
     ) -> HistoryPage:
         """One screen of «History uploads»: eight files of one period, newest first.
 
