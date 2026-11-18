@@ -144,10 +144,20 @@ move the list, so the layout never shifts under the finger.
 
 Pressing the active filter a second time opens the period picker: the days,
 weeks, months or years that hold a matching file, newest first, two to a row, the
-one on screen marked ✅. Picking one jumps straight to it. The picker comes from
-`FileStorageServices.available_periods`, which reads only the `created_at` column
-(pages of rows folded into periods, since PostgREST has no `DISTINCT`) and applies
-the same view filter as the list, so it never offers an empty period.
+one on screen marked ✅ and each button ending with its number of files
+(`2026-11-18 · 12`). Picking one jumps straight to it. The picker comes from
+`FileStorageServices.available_periods`, which gets the periods and their counts
+from one grouped query — `migrations/009_file_periods.sql` installs the
+`files_periods` function, which runs `date(created_at), count(*) ... group by`
+(or its week/month/year truncation) with the same view filter as the list, so it
+neither reads the matching rows nor asks the count of each period separately.
+Until that migration is applied the service falls back to folding the newest
+`created_at` values in pages of rows, and the picker keeps working.
+
+Every file button of the bot has the same shape, `📄 name - size - time`, and a
+long name is cut in the middle — first 12 characters, «...», last 8
+(`tg-space-bot...1432.log`) — so an upload never wraps a button and the panels
+keep one constant height.
 
 Filtering and ordering cover the whole list before the slice: `view` becomes the
 `WHERE` clause (`category=eq.…` or `file_name=ilike.*…*`), the period the
