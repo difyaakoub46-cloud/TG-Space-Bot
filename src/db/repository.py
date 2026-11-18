@@ -173,6 +173,7 @@ class FileRepository:
         query: str | None = None,
         category: FileCategory | None = None,
         created_after: datetime | None = None,
+        created_before: datetime | None = None,
         limit: int = 10,
         offset: int = 0,
         order: str = "created_at.desc",
@@ -185,9 +186,19 @@ class FileRepository:
         }
         if category is not None:
             params["category"] = f"eq.{category.value}"
-        if created_after is not None:
+        if created_after is not None and created_before is not None:
+            # A closed window for «History uploads»: PostgREST needs both bounds on
+            # the same column as one `and`, since a dict cannot repeat `created_at`.
+            params["and"] = (
+                f"(created_at.gte.{created_after.isoformat()},"
+                f"created_at.lt.{created_before.isoformat()})"
+            )
+        elif created_after is not None:
             # A date window for «History uploads»: only files saved since then.
             params["created_at"] = f"gte.{created_after.isoformat()}"
+        elif created_before is not None:
+            # Everything saved strictly before an instant (the end of a period).
+            params["created_at"] = f"lt.{created_before.isoformat()}"
         if query:
             cleaned = _sanitize_query(query)
             if cleaned:
