@@ -146,13 +146,15 @@ date and name orderings in both directions (the active one is marked ✅). The
 choice is kept in the screen key (`s` / `d`), so it survives opening a file and
 coming back, and the list is re-rendered with `edit_message_text`.
 
-A category is paged (one page per `PAGE_SIZE` files) and both the ordering and
-the slice are done by PostgREST, so the sort covers every file in the category
-and the last file of the library is reachable. The page lives in the screen key
-(`p`) next to the ordering, so opening a file and going back returns to the same
-page; changing the ordering restarts at page one because the pages are renumbered.
-Folder listings are short enough to be sorted in memory, where names are compared
-without Arabic diacritics and with the alef/ya variants folded.
+A category is paged eight files at a time, and both the ordering and the slice are
+done by PostgREST, so the sort covers every file in the category and the last file
+of the library is reachable. The page lives in the screen key (`p`) next to the
+ordering, so opening a file and going back returns to the same page; changing the
+ordering restarts at page one because the pages are renumbered. Folder files,
+search results and «History uploads» are paged at eight files too; a folder is
+sorted in memory (names are compared without Arabic diacritics and with the
+alef/ya variants folded) and then sliced, so its page turns keep the ordering.
+Folder listings are short enough to be sorted in memory as well.
 
 ## Files, duplicates and hashes
 
@@ -221,8 +223,9 @@ because of a database hiccup.
   survives a restart; a missing file simply means everybody speaks English.
 - `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
   (leave empty to allow everybody).
-- `PAGE_SIZE` — files per page in a category, and search results per page
-  (default `10`, capped at `20`).
+- `PAGE_SIZE` — folders per page in the folder list (default `10`, capped at
+  `20`). Category, folder, search and history file lists always show eight files
+  per page.
 - `TG_STORAGE_CHAT_FALLBACK` — the emergency group (for example the group named
   `TG-Storage-Chat-Fallback`): every file whose registration in Supabase fails is
   copied here instead of the library, and «🔧 Repair» moves it to its real group
