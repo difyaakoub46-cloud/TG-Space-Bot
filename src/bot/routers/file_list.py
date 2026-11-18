@@ -13,7 +13,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
-from src.bot import file_list, navigation
+from src.bot import file_list, navigation, views
 from src.bot.file_list import FileListCB, FileListContext
 from src.services.container import Services
 from src.services.files import history_date
@@ -99,6 +99,15 @@ async def file_list_callback(
         ctx = replace(ctx, page=1)
     elif data.action == "clear":
         ctx = replace(ctx, value="", page=1)
+        # The typed query is no longer needed: remove that user message from the
+        # chat instead of leaving it above the cleared list.
+        typed_id = (await state.get_data()).get("search_message_id")
+        if typed_id and callback.message is not None:
+            await views.delete_screen_message(
+                bot, callback.message.chat.id, int(typed_id)
+            )
+            await navigation.forget(state, int(typed_id))
+            await state.update_data(search_message_id=None)
 
     await navigation.navigate_callback(
         callback, state, bot, services, ctx.to_screen(base), push=False

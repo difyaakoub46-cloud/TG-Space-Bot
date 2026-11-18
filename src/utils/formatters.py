@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 # Size units stay in Latin letters in both languages: only the surrounding text
@@ -29,6 +30,22 @@ def truncate_name(
     if len(text) <= head + tail + 3:
         return text
     return f"{text[:head]}...{text[-tail:]}"
+
+
+def keep_extension(new_name: str, old_name: str) -> str:
+    """Give a renamed file the extension it already had.
+
+    Renaming ``Name.pdf`` to ``Noma`` must not lose the type of the file, so the
+    old extension is appended unless the new name already ends with it. A new
+    name that carries another extension keeps both, and an old name without an
+    extension leaves the new name untouched.
+    """
+    extension = os.path.splitext(str(old_name or ""))[1]
+    if not extension:
+        return new_name
+    if os.path.splitext(new_name)[1].casefold() == extension.casefold():
+        return new_name
+    return f"{new_name}{extension}"
 
 
 def format_number(n: int) -> str:

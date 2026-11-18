@@ -82,6 +82,8 @@ async def search_query_message(
         return
 
     await views.remember(state, message.message_id)
+    # «✖️ Clear search» removes this typed message again, so its id is kept.
+    await state.update_data(search_message_id=message.message_id)
     await navigation.navigate_message(
         message,
         state,
