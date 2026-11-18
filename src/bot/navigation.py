@@ -25,19 +25,17 @@ from aiogram.types import (
     Message,
 )
 
-from src.bot import library_views, search_view, views
+from src.bot import file_list, library_views, views
 from src.bot.keyboards import (
     FolderCB,
     back_to_menu_kb,
     categories_kb,
-    category_files_kb,
     file_actions_kb,
     folder_delete_confirm_kb,
     folder_files_kb,
     folders_kb,
     groups_kb,
     help_kb,
-    history_kb,
     language_kb,
     main_menu_kb,
     pending_kb,
@@ -52,7 +50,6 @@ from src.bot.status import group_permissions_text, statistics_text, status_text
 from src.core.i18n import get_language, pick
 from src.services.container import Services
 from src.services.files import FILES_PER_PAGE
-from src.utils.filetypes import parse_category
 from src.utils.sorting import SortSpec
 
 logger = logging.getLogger(__name__)
@@ -140,21 +137,10 @@ async def build(
             categories_kb(totals, favorites, len(folders)),
         )
 
-    if kind == "category":
-        category = parse_category(str(screen.get("name") or ""))
-        sort = SortSpec.from_screen(screen)
-        per_page = FILES_PER_PAGE
-        files, total, page = await services.files.category_page(
-            category, sort, page=_page(screen), per_page=per_page
-        )
-        pages = max(1, -(-total // per_page))
-        totals = await services.files.category_totals()
-        return (
-            views.category_text(
-                category, files, totals.get(category), sort, page, pages
-            ),
-            category_files_kb(files, category, sort, page, pages),
-        )
+    if kind == "list":
+        # One component, two entry points: «🔍 Search» passes the typed query and a
+        # library category its name; the list itself is written once.
+        return await file_list.screen(services, screen)
 
     if kind == "file":
         record = await services.files.get(str(screen.get("id") or ""))
@@ -213,29 +199,6 @@ async def build(
     if kind == "new_folder":
         return views.new_folder_text(), back_to_menu_kb()
 
-    if kind == "search":
-        # «🔍 Search» is «History uploads» with a query on top: the period, the
-        # eight-file slice, the page turns and the date jumps are the same, and the
-        # typed text only narrows the very same history. Folders are searched by
-        # name beside it, so both are found from one screen.
-        query = " ".join(str(screen.get("q") or "").split())
-        page = await services.files.history_page(
-            str(screen.get("f") or "all"),
-            screen.get("d"),
-            page=_page(screen),
-            query=query or None,
-        )
-        folders: list = []
-        folder_total = 0
-        if query:
-            folders, folder_total = await services.files.search_folders(
-                query, int(screen.get("u") or 0)
-            )
-        return (
-            search_view.search_text(page, query, folder_total),
-            search_view.search_kb(page, folders, query=query),
-        )
-
     if kind == "settings":
         user_id = int(screen.get("u") or 0) or None
         show_saved = services.preferences.show_saved_screen(user_id)
@@ -270,16 +233,6 @@ async def build(
                     show_pending=bool(pending),
                 ),
             )
-
-    if kind == "history":
-        # The period (f), its anchor day (d) and the page (p) are the whole key:
-        # the database applies the window and the 8-file slice.
-        page = await services.files.history_page(
-            str(screen.get("f") or "day"),
-            screen.get("d"),
-            page=_page(screen),
-        )
-        return library_views.history_text(page), history_kb(page)
 
     if kind == "language":
         language = get_language()
@@ -354,13 +307,13 @@ async def _render(
 
 
 async def _sync_typing(state: FSMContext, screen: dict[str, object]) -> None:
-    """Keep accepting a typed message exactly while «🔍 Search» is on screen.
+    """Keep accepting a typed message exactly while the search list is on screen.
 
-    Search has no separate prompt: the history screen itself listens for text. The
-    state is dropped as soon as another screen is rendered, so typing anywhere else
-    keeps doing whatever that screen expects.
+    Search has no separate prompt: the shared file list itself listens for text.
+    The state is dropped as soon as another screen is rendered, so typing anywhere
+    else keeps doing whatever that screen expects.
     """
-    if screen.get("k") == "search":
+    if screen.get("k") == "list" and screen.get("v") == "search":
         await state.set_state(SearchStates.waiting_query)
         return
     try:

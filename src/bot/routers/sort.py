@@ -1,8 +1,9 @@
-"""Sorting router: the «🔃 فرز / ترتيب» panel of the library and the folders.
+"""Sorting router: the «🔃 فرز / ترتيب» panel of a folder.
 
-The ordering lives in the screen key (``s`` and ``d``), not in the callback data,
-so a list keeps its order while the user opens files and comes back, and buttons
-stay short enough for Telegram.
+The library categories and the search list carry their ordering in the shared
+file-list component; a folder has its own in-memory sort, and this panel keeps it
+in the screen key (``s`` and ``d``) so a folder keeps its order while the user
+opens files and comes back.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="sort")
 
-SORTABLE = ("category", "folder")
+SORTABLE = ("folder",)
 
 
 async def _current_screen(state: FSMContext) -> dict[str, object] | None:
