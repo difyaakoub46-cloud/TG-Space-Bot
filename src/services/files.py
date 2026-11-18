@@ -39,6 +39,11 @@ HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 # The two ways into the shared file list: a typed query or a library category.
 LIST_VIEWS: tuple[str, ...] = ("search", "category")
 
+# The period picker reads the newest dates in pages of this size, and never scans
+# more than ``_DATES_SCAN`` rows looking for enough distinct periods.
+_DATES_BATCH = 200
+_DATES_SCAN = 1000
+
 
 def history_span(value: object) -> str:
     """A requested history period, defaulting to today."""
@@ -60,6 +65,18 @@ def history_date(value: object = None) -> date:
         return date.fromisoformat(str(value))
     except (TypeError, ValueError):
         return datetime.now(timezone.utc).date()
+
+
+def _period_key(day: date, span: str) -> tuple[int, ...]:
+    """The bucket one file belongs to, for a period filter."""
+    if span == "week":
+        year, week, _weekday = day.isocalendar()
+        return (year, week)
+    if span == "month":
+        return (day.year, day.month)
+    if span == "year":
+        return (day.year,)
+    return (day.year, day.month, day.day)
 
 
 def history_window(span: str, anchor: date) -> tuple[datetime | None, datetime | None]:
@@ -93,9 +110,9 @@ class FileListPage:
 
     The page is a window on the *whole* result of the view's filter, never a
     window on a fetched prefix: the ordering and the slice are applied by the
-    database. ``next_anchor`` / ``prev_anchor`` are the closest *older* / *newer*
-    day that still has files for the same view, found by the database, so the
-    navigation never walks empty days one by one.
+    database. ``next_anchor`` is the anchor of the closest *older* period that
+    still has files for the same view, found by the database, so the quick jump
+    never walks empty periods one by one.
     """
 
     files: list[StoredFile]
@@ -110,7 +127,6 @@ class FileListPage:
     start: datetime | None = None
     end: datetime | None = None
     next_anchor: date | None = None
-    prev_anchor: date | None = None
 
     @property
     def older_page(self) -> int | None:
@@ -506,9 +522,9 @@ class FileStorageServices:
         the ``ORDER BY``, and the page the ``LIMIT``/``OFFSET`` slice — so the
         ordering and the filter always cover the whole list before pagination.
 
-        When a period is exhausted the nearest older day with a file of the same
-        view is looked up for the «Next Day ⏭️» jump, and a page beyond the start
-        looks up the nearest newer day for «⏮️ Previous».
+        The closest older period holding a file of the same view is looked up for
+        the quick jump («Next Day/Week/Month/Year ⏭️»), so the jump works from any
+        page of the period and never walks the empty ones.
         """
         view = str(view or "search")
         view = view if view in LIST_VIEWS else "search"
@@ -520,7 +536,7 @@ class FileStorageServices:
         per_page = max(1, per_page)
         page = max(1, page)
 
-        # The view's own WHERE clause, shared by the page and the day jumps.
+        # The view's own WHERE clause, shared by the page and the period jump.
         query = value if view == "search" and value else None
         category = parse_category(value) if view == "category" and value else None
         order = database_order(sort_from_key(sort))
@@ -544,15 +560,12 @@ class FileStorageServices:
             page = pages
             files, total = await fetch(page)
 
+        # The quick jump is offered on every page of a period, not only on its
+        # last one: it goes straight to the closest older period with files.
         next_anchor: date | None = None
-        prev_anchor: date | None = None
-        if start is not None and page >= pages:
-            next_anchor = await self._nearest_history_day(
-                start, older=True, query=query, category=category
-            )
-        if end is not None and page == 1:
-            prev_anchor = await self._nearest_history_day(
-                end, older=False, query=query, category=category
+        if start is not None:
+            next_anchor = await self._nearest_older_day(
+                start, query=query, category=category
             )
 
         return FileListPage(
@@ -568,32 +581,68 @@ class FileStorageServices:
             start=start,
             end=end,
             next_anchor=next_anchor,
-            prev_anchor=prev_anchor,
         )
 
-    async def _nearest_history_day(
+    async def _nearest_older_day(
         self,
         moment: datetime,
         *,
-        older: bool,
         query: str | None = None,
         category: FileCategory | None = None,
     ) -> date | None:
-        """The day of the closest file before ``moment`` (or after it, inclusive).
+        """The day of the newest file stored before ``moment``.
 
-        One row is enough: jumping to a period only needs the day the next file was
-        uploaded on, and the database finds it without walking empty days. The
-        view's own filter is kept, so a jump never lands on a day without a match.
+        One row is enough: the period holding that file is the closest older period
+        with a match, so a jump never walks empty periods one by one. The view's own
+        filter is kept, so a jump never lands on a period without a match.
         """
         files, _total = await self._repository.search(
             query=query,
             category=category,
-            created_after=None if older else moment,
-            created_before=moment if older else None,
+            created_before=moment,
             limit=1,
-            order="created_at.desc" if older else "created_at.asc",
+            order="created_at.desc",
         )
         return files[0].created_at.date() if files else None
+
+    async def available_periods(
+        self,
+        view: str = "search",
+        value: str = "",
+        *,
+        span: str = "day",
+        limit: int = 24,
+    ) -> list[date]:
+        """The anchors of the most recent periods that hold a file, newest first.
+
+        This feeds the picker a filter opens on its second tap. PostgREST has no
+        ``SELECT DISTINCT``, so the dates are read a page of rows at a time (the
+        ``created_at`` column only) and folded into periods here; the scan stops as
+        soon as enough periods are known, so a busy day costs no extra query. The
+        view's own filter is applied, so the picker never offers an empty period.
+        """
+        view = str(view or "search")
+        view = view if view in LIST_VIEWS else "search"
+        value = " ".join(str(value or "").split())
+        span = history_span(span)
+        if span == "all":
+            return []
+
+        query = value if view == "search" and value else None
+        category = parse_category(value) if view == "category" and value else None
+
+        seen: dict[tuple[int, ...], date] = {}
+        offset = 0
+        while len(seen) < limit and offset < _DATES_SCAN:
+            dates = await self._repository.created_dates(
+                query=query, category=category, limit=_DATES_BATCH, offset=offset
+            )
+            if not dates:
+                break
+            for moment in dates:
+                seen.setdefault(_period_key(moment.date(), span), moment.date())
+            offset += _DATES_BATCH
+        return list(seen.values())[:limit]
 
     async def category_counts(self) -> dict[FileCategory, int]:
         return await self._repository.category_counts()
