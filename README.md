@@ -132,11 +132,22 @@ per-group detail lives only in «🛡 Group permissions».
 «🔍 Search» and a library category are two entry points into one component,
 `src/bot/file_list.py`. The first passes a typed query, the second the category
 name; the screen itself is written once: eight files a page, the five period
-filters (today, this week, this month, this year, all time), six orderings
-(newest, oldest, smallest, largest, A→Z, Z→A) on a panel of their own, «Previous ▶»
-inside the period and «Next Day/Week/Month ⏭» at its end, jumping to the nearest
-day that actually holds files. The date of the period is the first line under the
-title.
+filters («📁 All time», Day, Week, Month, Year) side by side in one row, six
+orderings (newest, oldest, smallest, largest, A→Z, Z→A) on a panel of their own,
+and a three-button page row: «◀️ Previous», «Next ▶️» and a quick jump — «Next
+Day ⏭️», «Next Week ⏭️», «Next Month ⏭️» or «Next Year ⏭️», named after the
+active filter — that lands on the closest older period which actually holds files
+instead of walking the empty ones. The date of the period is the first line under
+the title. At the edges of a period the turner stays in the row but only
+acknowledges the tap: «Previous» on page one and «Next» on the last page never
+move the list, so the layout never shifts under the finger.
+
+Pressing the active filter a second time opens the period picker: the days,
+weeks, months or years that hold a matching file, newest first, two to a row, the
+one on screen marked ✅. Picking one jumps straight to it. The picker comes from
+`FileStorageServices.available_periods`, which reads only the `created_at` column
+(pages of rows folded into periods, since PostgREST has no `DISTINCT`) and applies
+the same view filter as the list, so it never offers an empty period.
 
 Filtering and ordering cover the whole list before the slice: `view` becomes the
 `WHERE` clause (`category=eq.…` or `file_name=ilike.*…*`), the period the
