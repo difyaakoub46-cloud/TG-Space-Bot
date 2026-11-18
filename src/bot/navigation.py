@@ -18,10 +18,16 @@ import logging
 
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from src.bot import library_views, views
 from src.bot.keyboards import (
+    FolderCB,
     back_to_menu_kb,
     categories_kb,
     category_files_kb,
@@ -44,8 +50,9 @@ from src.bot.keyboards import (
     status_kb,
 )
 from src.bot.status import group_permissions_text, statistics_text, status_text
-from src.core.i18n import get_language
+from src.core.i18n import get_language, pick
 from src.services.container import Services
+from src.services.files import FILES_PER_PAGE
 from src.utils.filetypes import parse_category
 from src.utils.sorting import SortSpec
 
@@ -57,6 +64,54 @@ MAX_TRAIL = 20
 JOIN_FALLBACK = "fallback"
 
 MAIN: dict[str, object] = {"k": "main"}
+
+
+def _folder_page_row(page: int, pages: int) -> list[InlineKeyboardButton]:
+    """First / Previous / Next / Last for the files of one folder.
+
+    The page number lives in the ``FolderCB`` value; the folder itself is taken
+    from the screen key, so turning a page never reopens another folder.
+    """
+    buttons: list[InlineKeyboardButton] = []
+    if page > 1:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("⏮ First", "⏮ الأولى"),
+                callback_data=FolderCB(action="fpage", value="1").pack(),
+            )
+        )
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("◀ Previous", "◀ السابق"),
+                callback_data=FolderCB(action="fpage", value=str(page - 1)).pack(),
+            )
+        )
+    if page < pages:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("Next ▶", "التالي ▶"),
+                callback_data=FolderCB(action="fpage", value=str(page + 1)).pack(),
+            )
+        )
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("Last ⏭", "⏭ الأخيرة"),
+                callback_data=FolderCB(action="fpage", value=str(pages)).pack(),
+            )
+        )
+    return buttons
+
+
+def _with_folder_pages(
+    markup: InlineKeyboardMarkup, page: int, pages: int, after: int
+) -> InlineKeyboardMarkup:
+    """Put the page controls right under the folder's file buttons."""
+    row = _folder_page_row(page, pages)
+    if not row:
+        return markup
+    rows = [list(item) for item in markup.inline_keyboard]
+    rows.insert(min(after, len(rows)), row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _page(screen: dict[str, object]) -> int:
@@ -89,7 +144,7 @@ async def build(
     if kind == "category":
         category = parse_category(str(screen.get("name") or ""))
         sort = SortSpec.from_screen(screen)
-        per_page = services.settings.results_per_page()
+        per_page = FILES_PER_PAGE
         files, total, page = await services.files.category_page(
             category, sort, page=_page(screen), per_page=per_page
         )
@@ -126,10 +181,18 @@ async def build(
         )
         if folder is not None:
             sort = SortSpec.from_screen(screen)
-            files = await services.files.folder_files(folder.id, sort)
+            files, total, page = await services.files.folder_page(
+                folder.id, sort, page=_page(screen)
+            )
+            pages = max(1, -(-total // FILES_PER_PAGE))
             return (
                 views.folder_text(folder, files, sort),
-                folder_files_kb(files, folder.id, folder.favorite, sort),
+                _with_folder_pages(
+                    folder_files_kb(files, folder.id, folder.favorite, sort),
+                    page,
+                    pages,
+                    len(files),
+                ),
             )
 
     if kind == "folder_delete":
@@ -157,7 +220,7 @@ async def build(
     if kind == "search":
         query = str(screen.get("q") or "")
         results = await services.files.search(query)
-        per_page = services.settings.results_per_page()
+        per_page = FILES_PER_PAGE
         pages = max(1, -(-len(results) // per_page))
         page = min(_page(screen), pages)
         start = (page - 1) * per_page
