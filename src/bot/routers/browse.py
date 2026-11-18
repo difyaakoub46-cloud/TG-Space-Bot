@@ -97,12 +97,20 @@ async def history_callback(
         page = max(1, int(data.page_number or 1))
     except (TypeError, ValueError):
         page = 1
-    screen = {
-        "k": "history",
+
+    # «🔍 Search» keeps this very screen: its filters, pages and date jumps are the
+    # history ones, and its query has to survive every tap.
+    stored = dict((await state.get_data()).get("screen_key") or {})
+    searching = stored.get("k") == "search"
+    screen: dict[str, object] = {
+        "k": "search" if searching else "history",
         "f": history_span(data.filter_type),
         "d": history_date(data.target_date).isoformat(),
         "p": page,
     }
+    if searching:
+        screen["u"] = int(callback.from_user.id)
+        screen["q"] = str(stored.get("q") or "")
     await navigation.navigate_callback(
         callback, state, bot, services, screen, push=False
     )
@@ -142,6 +150,11 @@ async def category_callback(
     """Open a category; the page is kept in the screen key, not in the button."""
     data = CategoryCB.unpack(callback.data)
     category = parse_category(data.name)
+    stored = dict((await state.get_data()).get("screen_key") or {})
+    # Opening a category remembers the library behind it, so «↩️ Back» walks
+    # file → category file list → library. Turning a page stays on the same list
+    # and must not stack the library over and over.
+    paging = stored.get("k") == "category" and stored.get("name") == category.value
     await navigation.navigate_callback(
         callback,
         state,
@@ -152,7 +165,7 @@ async def category_callback(
             "name": category.value,
             "p": max(1, int(data.page or 1)),
         },
-        push=False,
+        push=not paging,
     )
 
 
