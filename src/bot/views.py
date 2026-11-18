@@ -226,6 +226,10 @@ async def reset_flow(state: FSMContext, *, keep_nav: bool = True) -> None:
     if keep_nav:
         kept["trail"] = data.get("trail")
         kept["screen_key"] = data.get("screen_key")
+        # A copy sent from a file screen waits for «↩️ Back» to remove it, so it
+        # must survive the resets of the flows in between; the main menu drops it
+        # with ``keep_nav=False`` and wipes the copy through ``cleanup_ids``.
+        kept["delivered_ids"] = data.get("delivered_ids")
     await state.clear()
     await state.update_data(**{name: value for name, value in kept.items() if value})
 
