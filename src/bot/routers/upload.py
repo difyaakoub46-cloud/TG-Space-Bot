@@ -258,22 +258,26 @@ async def _handle_album(
             for message, candidate in candidates
         )
     )
-    for kind, payload in outcomes:
+    # Messages of the files that reached the library, so the chat is kept free
+    # only for the copies that no longer need the user's attention.
+    settled: list[int] = []
+    for (message, _candidate), (kind, payload) in zip(candidates, outcomes):
         if kind == "saved":
             batch.saved.append(payload)  # type: ignore[arg-type]
+            settled.append(message.message_id)
         elif kind == "quarantined":
             batch.quarantined.append(payload)  # type: ignore[arg-type]
         elif kind == "duplicate":
             batch.duplicates.append(payload)  # type: ignore[arg-type]
+            settled.append(message.message_id)
         else:
             batch.failures.append(payload)  # type: ignore[arg-type]
 
-    # One request for the whole batch instead of two per file.
-    await safe_delete_messages(
-        bot,
-        first.chat.id,
-        [message.message_id for message in messages] + [status.message_id],
-    )
+    # One request for the whole batch instead of two per file. A held or failed
+    # file keeps its message: removing it would leave the user with a summary and
+    # no way to read the reason or resend the same file. The status bubble is
+    # always removed.
+    await safe_delete_messages(bot, first.chat.id, [*settled, status.message_id])
 
     if batch.empty:
         return
