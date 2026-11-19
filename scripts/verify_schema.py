@@ -57,6 +57,9 @@ EXPECTED_TRIGGERS = ("files_sync_stats", "files_touch_updated_at")
 # Supabase creates these roles; a bare PostgreSQL does not have them, and 005
 # grants SELECT to them.
 SUPABASE_ROLES = ("anon", "authenticated", "service_role")
+# 011 closes the totals views and the date-picker function to the public roles.
+PUBLIC_ROLES = ("anon", "authenticated")
+PERIODS_FUNCTION = "public.files_periods(text, text, text, integer, integer)"
 
 
 class VerificationError(RuntimeError):
@@ -207,6 +210,91 @@ def check_identity(conn: psycopg.Connection) -> list[str]:
     return problems
 
 
+def check_view_security(conn: psycopg.Connection) -> list[str]:
+    """The totals views must not leak their rows to the public roles.
+
+    A view runs with its owner's rights unless ``security_invoker`` is on, so a
+    plain revoke would not be enough; 011 turns both on and takes the privileges
+    away. The bot reaches PostgREST with the service key, which keeps SELECT.
+    """
+    problems: list[str] = []
+    cur = conn.cursor()
+    for view in EXPECTED_VIEWS:
+        rows = _rows(
+            cur,
+            """
+            select coalesce(array_to_string(c.reloptions, ','), '')
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public' and c.relname = %s
+            """,
+            (view,),
+        )
+        if not rows:
+            problems.append(f"missing view public.{view}")
+            continue
+        options = {item.strip().lower() for item in rows[0][0].split(",") if item.strip()}
+        if "security_invoker=true" not in options:
+            problems.append(
+                f"{view}: security_invoker is not enabled (reloptions={rows[0][0] or 'none'})"
+            )
+        for role in PUBLIC_ROLES:
+            allowed = _rows(
+                cur, "select has_table_privilege(%s, %s, 'SELECT')", (role, f"public.{view}")
+            )[0][0]
+            if allowed:
+                problems.append(f"{view}: {role} still has SELECT")
+        kept = _rows(
+            cur, "select has_table_privilege('service_role', %s, 'SELECT')", (f"public.{view}",)
+        )[0][0]
+        if not kept:
+            problems.append(f"{view}: service_role lost SELECT, so the bot cannot read it")
+    return problems
+
+
+def check_function_security(conn: psycopg.Connection) -> list[str]:
+    """``files_periods`` must stay callable for the bot only.
+
+    A function is executable by ``PUBLIC`` as soon as it is created, and ``anon``
+    inherits ``PUBLIC``, so revoking only from ``anon`` would leave it callable.
+    """
+    problems: list[str] = []
+    cur = conn.cursor()
+    if not _rows(
+        cur,
+        """
+        select 1 from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'files_periods'
+        """,
+    ):
+        return ["missing function public.files_periods"]
+
+    for role, expected in (("anon", False), ("authenticated", True), ("service_role", True)):
+        allowed = _rows(
+            cur, "select has_function_privilege(%s, %s, 'EXECUTE')", (role, PERIODS_FUNCTION)
+        )[0][0]
+        if allowed is not expected:
+            problems.append(
+                f"files_periods: {role} has EXECUTE={allowed}; expected {expected}"
+            )
+
+    public_grants = _rows(
+        cur,
+        """
+        select count(*)
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+        where n.nspname = 'public' and p.proname = 'files_periods'
+          and acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+        """,
+    )[0][0]
+    if public_grants:
+        problems.append("files_periods is still executable by PUBLIC")
+    return problems
+
+
 def smoke_test(conn: psycopg.Connection) -> list[str]:
     """Exercise the triggers, the views and the constraints on the new schema."""
     problems: list[str] = []
@@ -268,6 +356,8 @@ CHECKS = (
     ("objects", check_objects),
     ("foreign key types", check_foreign_key_types),
     ("identity columns", check_identity),
+    ("view security", check_view_security),
+    ("function security", check_function_security),
     ("runtime smoke test", smoke_test),
 )
 
