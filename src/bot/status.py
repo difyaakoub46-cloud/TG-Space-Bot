@@ -324,8 +324,8 @@ async def status_text(
             f"المالك: <code>{settings.owner_id or 'غير محدد'}</code>",
         ),
         pick(
-            f"Allowed users: {format_number(len(allowed)) if allowed else 'everybody'}",
-            f"المستخدمون المسموحون: {format_number(len(allowed)) if allowed else 'الجميع'}",
+            f"Allowed users: {format_number(len(allowed)) if allowed else 'not configured'}",
+            f"المستخدمون المسموحون: {format_number(len(allowed)) if allowed else 'غير مهيّأ'}",
         ),
         "",
         pick("🗄 <b>Database</b> (Supabase)", "🗄 <b>قاعدة البيانات</b> (Supabase)"),

@@ -123,9 +123,12 @@ def main() -> None:
     # The bot is private: with no allow-list it stops here, before the keep-alive
     # server or polling start, so it can never be left open to everybody.
     try:
-        settings.require_allowed_users()
+        allowed = settings.require_allowed_users()
     except ConfigurationError as exc:
         raise SystemExit(1) from exc
+    # The deployment log is how the owner confirms the host really carries
+    # ALLOWED_USER_IDS: the count is printed, never the ids themselves.
+    logger.info("Allow-list: %d account(s) may use the bot", len(allowed))
 
     services = build_services(settings)
     dispatcher = build_dispatcher(services)

@@ -272,8 +272,11 @@ because of a database hiccup.
 - `PREFERENCES_PATH` — where each user's language is kept (default
   `data/user_preferences.json`). Point it at a persistent disk so the choice
   survives a restart; a missing file simply means everybody speaks English.
-- `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot
-  (leave empty to allow everybody).
+- `ALLOWED_USER_IDS` — comma-separated Telegram user ids allowed to use the bot.
+  **Required:** the bot is private, so an empty or unparsable list makes it log a
+  critical error and exit before polling starts. Set it in the deployment
+  environment (Render → Environment) and check that the service starts without a
+  `ALLOWED_USER_IDS is empty` line in its logs.
 - `PAGE_SIZE` — folders per page in the folder list (default `10`, capped at
   `20`). The shared file list and a folder's files always show eight files per
   page.
