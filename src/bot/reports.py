@@ -8,6 +8,7 @@ screens.
 from __future__ import annotations
 
 import html
+import logging
 from collections.abc import Sequence
 
 from src.bot.status import right_labels
@@ -19,6 +20,8 @@ from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number
 
 _MAX_REASON = 200
+
+logger = logging.getLogger(__name__)
 
 
 def _escape(value: object) -> str:
@@ -154,6 +157,11 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
     """The outcome of «Repair»: registered, moved, and what is still waiting."""
     lines = [pick("🔧 <b>Repair result</b>", "🔧 <b>نتيجة الإصلاح</b>"), ""]
     if report.database_error:
+        # The PostgREST code and the failing query stay in the logs; the owner only
+        # needs to know that nothing was moved and why, in one plain sentence.
+        logger.error(
+            "Repair stopped: the database failed (%s)", report.database_error
+        )
         lines.append(
             pick(
                 "⛔ The database is not answering, so no file was moved.",
@@ -162,8 +170,8 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
         )
         lines.append(
             pick(
-                f"Reason: {_escape(report.database_error[:_MAX_REASON])}",
-                f"السبب: {_escape(report.database_error[:_MAX_REASON])}",
+                "The technical details are in the logs.",
+                "التفاصيل التقنية في السجلات.",
             )
         )
         lines.append("")
@@ -219,10 +227,17 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
         )
     )
     if report.errors:
+        for error in report.errors:
+            logger.error("Repair: %s", error)
         lines.append("")
-        lines.append(pick("<b>Details</b>", "<b>تفاصيل</b>"))
-        for error in report.errors[:10]:
-            lines.append(f"• {_escape(error[:160])}")
+        lines.append(
+            pick(
+                f"⚠️ {format_number(len(report.errors))} file(s) could not be handled; "
+                "the technical details are in the logs.",
+                f"⚠️ تعذّر التعامل مع {format_number(len(report.errors))} ملفاً؛ "
+                "التفاصيل التقنية في السجلات.",
+            )
+        )
     if not remaining:
         lines.append("")
         lines.append(

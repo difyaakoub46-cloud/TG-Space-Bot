@@ -300,8 +300,11 @@ async def status_text(
         else:
             await services.files.stats()
         database_error = None
-    except (SupabaseError, OSError) as exc:
-        database_error = str(exc)
+    except (SupabaseError, OSError):
+        # The technical text (PostgREST codes, the failing URL) belongs to the
+        # logs; the screen only says that the database did not answer.
+        logger.error("Status screen: the database call failed", exc_info=True)
+        database_error = True
     latency_ms = (time.perf_counter() - started) * 1000
     checks = list(checks or ())
 
@@ -341,8 +344,10 @@ async def status_text(
     if database_error:
         lines.append(
             pick(
-                f"⛔ Could not read the stats: {_escape(database_error[:160])}",
-                f"⛔ تعذّر قراءة الإحصائيات: {_escape(database_error[:160])}",
+                "⛔ The database did not answer, so no number could be read. "
+                "The details are in the logs.",
+                "⛔ تعذّر الوصول إلى قاعدة البيانات، فلم تُقرأ الأرقام. "
+                "التفاصيل في السجلات.",
             )
         )
 
