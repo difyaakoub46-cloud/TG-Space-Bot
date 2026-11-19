@@ -15,7 +15,7 @@ from aiogram.exceptions import TelegramAPIError
 
 from src.bot import reports
 from src.bot.dispatcher import build_dispatcher
-from src.core.config import Settings
+from src.core.config import ConfigurationError, Settings
 from src.core.logging import setup_logging
 from src.services.container import build_services
 from src.web.app import create_app
@@ -120,6 +120,12 @@ async def run_bot(settings: Settings, services, dispatcher) -> None:
 def main() -> None:
     settings = Settings()
     setup_logging(settings)
+    # The bot is private: with no allow-list it stops here, before the keep-alive
+    # server or polling start, so it can never be left open to everybody.
+    try:
+        settings.require_allowed_users()
+    except ConfigurationError as exc:
+        raise SystemExit(1) from exc
 
     services = build_services(settings)
     dispatcher = build_dispatcher(services)

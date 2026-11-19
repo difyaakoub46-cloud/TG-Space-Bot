@@ -38,9 +38,10 @@ class AccessMiddleware(BaseMiddleware):
     def __init__(self, services: Services) -> None:
         self._settings = services.settings
         self._preferences = services.preferences
-        self._allowed = services.settings.allowed_users()
-        if self._allowed:
-            logger.info("Access limited to %s user(s)", len(self._allowed))
+        # An empty allow-list is a fatal misconfiguration, not "everybody": the
+        # bot is private, so it refuses to start instead of serving strangers.
+        self._allowed = services.settings.require_allowed_users()
+        logger.info("Access limited to %s user(s)", len(self._allowed))
 
     async def __call__(
         self,
@@ -52,9 +53,6 @@ class AccessMiddleware(BaseMiddleware):
         language = self._preferences.language_for(user_id)
         set_language(language)
         try:
-            if not self._allowed:
-                return await handler(event, data)
-
             if user_id is not None and user_id in self._allowed:
                 return await handler(event, data)
 

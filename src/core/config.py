@@ -136,7 +136,11 @@ class Settings(BaseSettings):
     )
 
     def allowed_users(self) -> frozenset[int]:
-        """Telegram user ids allowed to use the bot (empty = everybody)."""
+        """Telegram user ids allowed to use the bot.
+
+        An empty set means the list was not configured; :meth:`require_allowed_users`
+        is what refuses to run in that case (the bot is private, never public).
+        """
         ids: set[int] = set()
         for part in re.split(r"[,\s]+", self.allowed_user_ids_raw.strip()):
             if not part:
@@ -146,6 +150,27 @@ class Settings(BaseSettings):
             except ValueError:
                 logger.warning("Ignoring invalid ALLOWED_USER_IDS entry: %r", part)
         return frozenset(ids)
+
+    def require_allowed_users(self) -> frozenset[int]:
+        """The allow-list, or a fatal error when it is empty.
+
+        The bot is private: an unset or unparsable ALLOWED_USER_IDS must stop it
+        from starting, because the alternative is a bot that serves any account
+        that finds it.
+        """
+        ids = self.allowed_users()
+        if ids:
+            return ids
+        logger.critical(
+            "ALLOWED_USER_IDS is empty or has no valid id: refusing to start. "
+            "The bot is private, so set at least one Telegram user id, for "
+            "example ALLOWED_USER_IDS=%s",
+            "123456789",
+        )
+        raise ConfigurationError(
+            "ALLOWED_USER_IDS is empty: the bot is private and will not run "
+            "without at least one allowed Telegram user id."
+        )
 
     def results_per_page(self) -> int:
         return max(1, min(self.page_size, MAX_PAGE_SIZE))
