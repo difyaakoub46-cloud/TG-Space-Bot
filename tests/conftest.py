@@ -9,6 +9,7 @@ order of the calls (copy, delete, hold, move) without a network.
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:  # allow `pytest` from any working directory
     sys.path.insert(0, str(ROOT))
 
+from src.bot import library_views  # noqa: E402
 from src.core.config import Settings  # noqa: E402
 from src.services.files import FileStorageServices  # noqa: E402
 from src.services.pending import PendingStore  # noqa: E402
@@ -163,3 +165,24 @@ def service(
     return FileStorageServices(
         settings, repository, storage=storage, bot=None, pending=store
     )
+
+
+# The list header writes «📅 Today: …» by comparing the day on screen with the real
+# clock, so the file-list tests used to pass only while the machine's date happened
+# to be the day their dates describe. That scenario is one fixed week (18 November
+# 2026), and moving it with the real day instead would break the day, week and month
+# assertions of the period picker every Monday and around the end of a month, so the
+# clock is frozen to that week here.
+FROZEN_NOW = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make «today» a fixed day for every test that reads the clock."""
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return FROZEN_NOW if tz is not None else FROZEN_NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(library_views, "datetime", _FixedDatetime)
