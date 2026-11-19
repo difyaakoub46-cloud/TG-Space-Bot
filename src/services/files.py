@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 100
 
+# How many fingerprints may be computed at the same time. Hashing downloads the
+# file again, so a big album used to start one download per file at once and
+# competed with the screens for memory and bandwidth. The rest wait their turn.
+HASH_CONCURRENCY = 2
+
 # One screen of a file list, everywhere: a category, a folder and the shared
 # list all show eight files at most.
 FILES_PER_PAGE = 8
@@ -237,6 +242,9 @@ class FileStorageServices:
         self._cache = TTLCache(CACHE_TTL_SECONDS)
         # Running background fingerprints; referenced so the loop keeps them alive.
         self._hash_tasks: set[asyncio.Task] = set()
+        # The queue behind ``_schedule_hash``: at most HASH_CONCURRENCY downloads
+        # run together, the other fingerprints wait here.
+        self._hash_slots = asyncio.Semaphore(HASH_CONCURRENCY)
 
     def bind_bot(self, bot: Bot) -> None:
         """The bot is needed to read a file's bytes when fingerprinting it."""
@@ -309,7 +317,10 @@ class FileStorageServices:
 
     async def _store_hash(self, record: StoredFile, candidate: FileCandidate) -> None:
         try:
-            fingerprint = await self.content_hash(candidate)
+            # Only the download is limited: the small database write that follows
+            # must not hold a slot the next queued fingerprint is waiting for.
+            async with self._hash_slots:
+                fingerprint = await self.content_hash(candidate)
             if fingerprint:
                 await self._repository.set_content_hash(record.id, fingerprint)
         except Exception:  # noqa: BLE001 - a fingerprint is best effort
