@@ -85,6 +85,27 @@ the triggers and views. It never touches the configured database: it creates a
 temporary one on `VERIFY_DATABASE_URL`, or on a private PostgreSQL started by
 `pgserver` when that variable is unset.
 
+## Schema migrations
+
+`python -m scripts.init_db` runs every file in `migrations/` in name order; all of
+them are idempotent, so running it again after a new file lands is safe.
+
+| Files | What they add |
+| --- | --- |
+| `001`–`003` | the `files` table, the `files_stats` counter and its trigger, alignment with the live schema |
+| `004`–`007` | virtual folders and their links, the totals views, favourites and their manual order |
+| `008` | `content_hash` and the uniqueness that keeps one Telegram file from being stored twice |
+| `009`–`010` | `files_periods(...)`: the per-period counts behind the picker, and the caller's zone offset |
+| `011` | `security_invoker` on `files_by_category` / `folder_totals`, revoked from `anon` and `authenticated`; `files_periods` executable only by `authenticated` and `service_role` |
+| `012` | `folders_overview`: every folder with its file count and byte total in one row |
+| `013` | `set_folder_orders(...)`: writes the position of every favourite in one call |
+
+`011`–`013` are what make the screens cheap, and they are readable/executable by
+the **service key only**. Without them the bot still renders (it falls back to the
+older, slower requests), but the totals views stay public and every page costs
+more. So keep `SUPABASE_SERVICE_KEY` set, and apply the migrations before the
+first run after an upgrade.
+
 ## Architecture
 
 - `src/core/` — settings, logging and the two-language core (`i18n.py`).
@@ -206,6 +227,29 @@ at page one because the pages are renumbered. A folder is sorted in memory (name
 are compared without Arabic diacritics and with the alef/ya variants folded) and
 then sliced, so its page turns keep the ordering. Folder listings are short enough
 to be sorted in memory as well.
+
+## Performance notes
+
+The library screens are built to spend one round trip where one is enough:
+
+- **A page of the file list** asks PostgREST for `count=planned` instead of
+  `count=exact`, so the total comes from the query plan and Postgres does not walk
+  every matching row on each «Next». The number is therefore an estimate; a page
+  that is on screen always counts itself, so the pager never drops it.
+- **The folders screen** reads `folders_overview` once (migration `012`) instead
+  of `folders` plus `folder_totals`, with the two-request path kept as a fallback.
+- **Moving a favourite** sends the whole new order once to `set_folder_orders`
+  (migration `013`) instead of one `PATCH` per folder.
+- **Content fingerprints** are computed in the background, at most two downloads
+  at a time (`HASH_CONCURRENCY`), so a big album no longer fights the screens for
+  memory and bandwidth.
+- **«🔍 Re-check permissions»** and **«🔍 Check and update status»** pass
+  `refresh=True`, which drops the stored group report and asks Telegram again
+  instead of redrawing the cached one.
+
+The library totals, the category totals and the folder list are cached for a few
+seconds (`CACHE_TTL_SECONDS`) and every write clears that cache, so a new upload
+shows up immediately.
 
 ## Files, duplicates and hashes
 
