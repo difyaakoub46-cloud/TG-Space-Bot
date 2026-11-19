@@ -23,6 +23,7 @@ from src.bot.states import SearchStates
 from src.core.config import Settings
 from src.db.models import Folder, StoredFile
 from src.db.repository import SupabaseError
+from src.services import files as files_module
 from src.services.files import (
     FILES_PER_PAGE,
     FileStorageServices,
@@ -143,6 +144,7 @@ class ListRepository:
         query: str | None = None,
         category: FileCategory | None = None,
         limit: int = 24,
+        zone_offset: int = 0,
     ) -> list[tuple[date, int]]:
         """Periods and their counts, as the grouped SQL function returns them."""
         needle = (query or "").casefold()
@@ -153,10 +155,13 @@ class ListRepository:
             and (category is None or file.category is category)
         ]
         rows.sort(key=lambda file: file.created_at, reverse=True)
+        # ``files_periods`` groups in the caller's offset, so the fake does too.
+        zone = timezone(timedelta(minutes=zone_offset))
         buckets: dict[date, int] = {}
         for file in rows:
-            start, _end = history_window(span, file.created_at.date())
-            anchor = start.date() if start is not None else file.created_at.date()
+            day = file.created_at.astimezone(zone).date()
+            start, _end = history_window(span, day, zone)
+            anchor = start.astimezone(zone).date() if start is not None else day
             buckets[anchor] = buckets.get(anchor, 0) + 1
         return sorted(buckets.items(), key=lambda item: item[0], reverse=True)[:limit]
 
@@ -872,3 +877,26 @@ async def test_picking_a_period_opens_it(monkeypatch) -> None:
     assert captured["screen"]["f"] == "day"
     assert captured["screen"]["d"] == OLDER_DAY.isoformat()
     assert captured["screen"]["p"] == 1
+
+
+async def test_the_picker_and_the_list_agree_in_a_non_utc_zone(monkeypatch) -> None:
+    """B4: the picker groups in the user's zone, like the list windows do."""
+    east = timezone(timedelta(hours=3))
+    monkeypatch.setattr(files_module, "local_zone", lambda: east)
+    # 22:30 UTC is already 01:30 on the next day in a zone three hours ahead.
+    late = datetime(2026, 11, 18, 22, 30, tzinfo=UTC)
+    library = service([record(7, late)])
+
+    periods = await library.available_periods("category", "document", span="day")
+    # The local day of the upload, not the UTC one that was still running.
+    assert periods == [(date(2026, 11, 19), 1)]
+
+    page = await library.file_list_page(
+        "category", "document", span="day", anchor=periods[0][0]
+    )
+    # The day the picker offers opens the page that holds the file.
+    assert [file.id for file in page.files] == ["id-7"]
+    assert (page.start, page.end) == (
+        datetime(2026, 11, 18, 21, 0, tzinfo=UTC),
+        datetime(2026, 11, 19, 21, 0, tzinfo=UTC),
+    )

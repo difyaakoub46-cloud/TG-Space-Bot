@@ -77,6 +77,18 @@ def local_zone() -> tzinfo:
     return datetime.now().astimezone().tzinfo or timezone.utc
 
 
+def zone_offset_minutes(zone: tzinfo | None = None) -> int:
+    """How far the local zone is ahead of UTC right now, in minutes.
+
+    The picker groups inside Postgres, which needs the offset rather than a date:
+    ``+180`` for a zone three hours ahead, so a file sent at 00:30 is counted under
+    the local day and not under the UTC day that was still running.
+    """
+    zone = zone or local_zone()
+    offset = datetime.now(zone).utcoffset() or timedelta(0)
+    return int(offset.total_seconds() // 60)
+
+
 def history_date(value: object = None, zone: tzinfo | None = None) -> date:
     """The day a period is anchored on, defaulting to today in the local zone.
 
@@ -704,7 +716,9 @@ class FileStorageServices:
         ``date(created_at)`` and ``count(*)`` grouped by it, or by its
         week/month/year truncation), so the picker neither reads the matching rows
         nor asks the count of each period separately. The view's own filter is
-        applied, so the picker never offers an empty period.
+        applied, so the picker never offers an empty period. The grouping happens
+        in the local zone, the same one the list windows are built from, so both
+        agree about which day a file belongs to.
         """
         view = str(view or "search")
         view = view if view in LIST_VIEWS else "search"
@@ -718,7 +732,11 @@ class FileStorageServices:
 
         try:
             return await self._repository.period_counts(
-                span=span, query=query, category=category, limit=limit
+                span=span,
+                query=query,
+                category=category,
+                limit=limit,
+                zone_offset=zone_offset_minutes(),
             )
         except SupabaseError:
             # The SQL function is not installed yet: fold the dates here instead, so

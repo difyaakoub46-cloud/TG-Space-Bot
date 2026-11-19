@@ -57,15 +57,18 @@ async def test_the_periods_and_their_counts_come_from_one_grouped_query() -> Non
         "p_query": None,
         "p_category": "document",
         "p_limit": 24,
+        "p_offset": 0,
     }
 
 
 async def test_a_search_passes_its_query_to_the_grouped_query() -> None:
     repository, requests = make_repository([{"anchor": "2026-11-16", "files": 1}])
 
-    await repository.period_counts(span="week", query="  holiday*  ")
+    await repository.period_counts(span="week", query="  holiday*  ", zone_offset=180)
 
     body = json.loads(requests[0].content)
     assert body["p_span"] == "week"
     assert body["p_query"] == "holiday"
     assert body["p_category"] is None
+    # The grouping happens in the user's zone, three hours ahead of UTC.
+    assert body["p_offset"] == 180

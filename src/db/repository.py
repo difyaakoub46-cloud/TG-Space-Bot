@@ -252,6 +252,7 @@ class FileRepository:
         query: str | None = None,
         category: FileCategory | None = None,
         limit: int = 24,
+        zone_offset: int = 0,
     ) -> list[tuple[date, int]]:
         """The periods that hold a file and how many, newest first, in one query.
 
@@ -259,13 +260,16 @@ class FileRepository:
         ``select date(created_at), count(*) ... group by date(created_at)`` for a
         day, its week/month/year truncation otherwise. One request returns every
         period with its own count, so the picker never reads the matching rows and
-        never asks the count of each period separately.
+        never asks the count of each period separately. ``zone_offset`` is how many
+        minutes the user's zone is ahead of UTC, so a period starts at the local
+        midnight instead of UTC's.
         """
         payload: dict[str, Any] = {
             "p_span": span,
             "p_query": _sanitize_query(query) if query else None,
             "p_category": category.value if category is not None else None,
             "p_limit": max(1, int(limit)),
+            "p_offset": int(zone_offset),
         }
         response = await self._request(
             "POST", path="rpc/files_periods", json=payload
