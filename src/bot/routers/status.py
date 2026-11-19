@@ -52,7 +52,17 @@ async def menu_status_callback(
 async def status_refresh_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Reach the storage groups again and refresh every number in place."""
+    """Reach the storage groups again and refresh every number in place.
+
+    Same rule as «Re-check permissions»: the storage report is reused for a few
+    seconds, so the screen would show the stored answer. ``refresh=True`` makes
+    this button ask Telegram now, and the screen opened right after reads that
+    fresh report.
+    """
+    try:
+        await services.storage.check_chats(refresh=True)
+    except Exception:  # noqa: BLE001 - the screen reports the failure itself
+        logger.exception("Could not re-check the storage groups")
     await navigation.navigate_callback(
         callback, state, bot, services, dict(STATUS_SCREEN), push=False
     )
