@@ -227,11 +227,20 @@ class FileRepository:
             if cleaned:
                 params["file_name"] = f"ilike.*{cleaned}*"
 
+        # `count=exact` makes Postgres read every matching row just to report the
+        # total, on every page: that is the heavy query behind a slow «next page».
+        # `count=planned` takes the same number from the query plan instead, so a
+        # page opens without counting the library; the total is then an estimate
+        # (accurate enough for the page count and the result counter).
         response = await self._request(
-            "GET", params=params, prefer="count=exact"
+            "GET", params=params, prefer="count=planned"
         )
+        rows = self._rows(response)
         total = _parse_total(response.headers.get("content-range"))
-        return [StoredFile.from_row(row) for row in self._rows(response)], total
+        # A plan that underestimates must not hide the rows it just returned: the
+        # page on screen always counts itself, so the pager never treats it as gone.
+        total = max(total, offset + len(rows))
+        return [StoredFile.from_row(row) for row in rows], total
 
     async def created_dates(
         self,
