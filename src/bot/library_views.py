@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import html
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from src.bot.views import category_label
 from src.core.i18n import pick
 from src.db.models import StoredFile
+from src.services.files import local_zone
 from src.utils.formatters import format_number
 
 if TYPE_CHECKING:
@@ -50,9 +51,11 @@ def history_period_label(page: FileListPage) -> str:
     """The period on screen, e.g. «📅 Today: 2026-11-18» or the week's range.
 
     Only the current period is written out: the filters live on the buttons, so
-    the message has no «Showing …» or «Page x of y» line to read through.
+    the message has no «Showing …» or «Page x of y» line to read through. The day
+    is the local one, the same day the filter windows are built from, so «Today»
+    appears at the user's midnight and not at UTC's.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(local_zone()).date()
     if page.span == "all":
         return pick("📁 All time", "📁 كل الوقت")
     if page.span == "day":

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from io import BytesIO
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -58,8 +60,25 @@ def history_span(value: object) -> str:
     return span if span in HISTORY_SPANS else "day"
 
 
-def history_date(value: object = None) -> date:
-    """The day a period is anchored on, defaulting to today (UTC).
+def local_zone() -> tzinfo:
+    """The timezone the day, week, month and year boundaries follow.
+
+    The bot serves one owner, so «today» is the owner's day: a file sent at 00:30
+    belongs to the day that started half an hour ago locally, not to the UTC day
+    that still runs. The zone is the deployment's own (``TZ``, or the system's),
+    so a server outside UTC groups the uploads the way the user sees them.
+    """
+    name = os.environ.get("TZ", "").strip()
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning("Unknown TZ=%r, using the system timezone", name)
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def history_date(value: object = None, zone: tzinfo | None = None) -> date:
+    """The day a period is anchored on, defaulting to today in the local zone.
 
     The anchor is what the screen shows and what the filter buttons keep: a week
     is the week around it, a month its month, and a day is the day itself.
@@ -71,7 +90,7 @@ def history_date(value: object = None) -> date:
     try:
         return date.fromisoformat(str(value))
     except (TypeError, ValueError):
-        return datetime.now(timezone.utc).date()
+        return datetime.now(zone or local_zone()).date()
 
 
 def _period_key(day: date, span: str) -> tuple[int, ...]:
@@ -86,13 +105,19 @@ def _period_key(day: date, span: str) -> tuple[int, ...]:
     return (day.year, day.month, day.day)
 
 
-def history_window(span: str, anchor: date) -> tuple[datetime | None, datetime | None]:
-    """The half-open UTC range ``[start, end)`` of a period, or ``(None, None)``.
+def history_window(
+    span: str, anchor: date, zone: tzinfo | None = None
+) -> tuple[datetime | None, datetime | None]:
+    """The half-open range ``[start, end)`` of a period, as UTC instants.
 
-    The range is computed here and sent to PostgREST, so the slice and the count
-    always describe the same window without fetching the library first.
+    A day, a week, a month and a year are the periods *of the local zone*: their
+    midnights are converted to UTC before they reach PostgREST, so a file sent at
+    00:30 local time counts towards the day it was sent on. The range is computed
+    here and sent to the query, so the slice and the count always describe the same
+    window without fetching the library first.
     """
     span = history_span(span)
+    zone = zone or local_zone()
     if span == "day":
         first, after = anchor, anchor + timedelta(days=1)
     elif span == "week":
@@ -106,8 +131,8 @@ def history_window(span: str, anchor: date) -> tuple[datetime | None, datetime |
     else:
         return None, None
     return (
-        datetime.combine(first, time.min, tzinfo=timezone.utc),
-        datetime.combine(after, time.min, tzinfo=timezone.utc),
+        datetime.combine(first, time.min, tzinfo=zone).astimezone(timezone.utc),
+        datetime.combine(after, time.min, tzinfo=zone).astimezone(timezone.utc),
     )
 
 
@@ -662,7 +687,7 @@ class FileStorageServices:
             limit=1,
             order="created_at.desc",
         )
-        return files[0].created_at.date() if files else None
+        return files[0].created_at.astimezone(local_zone()).date() if files else None
 
     async def available_periods(
         self,
@@ -721,9 +746,10 @@ class FileStorageServices:
             if not dates:
                 break
             for moment in dates:
-                start, _end = history_window(span, moment.date())
-                anchor = start.date() if start is not None else moment.date()
-                bucket = seen.setdefault(_period_key(moment.date(), span), [anchor, 0])
+                day = moment.astimezone(local_zone()).date()
+                start, _end = history_window(span, day)
+                anchor = start.astimezone(local_zone()).date() if start else day
+                bucket = seen.setdefault(_period_key(day, span), [anchor, 0])
                 bucket[1] += 1
             offset += _DATES_BATCH
         return [(anchor, count) for anchor, count in list(seen.values())[:limit]]
