@@ -31,7 +31,12 @@ _MAX_TRACKED_MESSAGES = 100
 # When the main menu is opened, everything in the recent window is removed as
 # well: after a restart the bot no longer knows the ids of older messages, so the
 # window is what guarantees that delivered and uploaded files really disappear.
-_WIPE_WINDOW = 80
+# Every id here is a blind deletion, and one already-gone id makes Telegram reject
+# the whole batch, which then costs a call per message. The tracked ids cover the
+# screens the bot knows, so the window only has to cover one busy flow without it:
+# the ten files of an album, their status bubble, the result screen and the notices
+# around them — fifteen messages, with room to spare.
+_WIPE_WINDOW = 20
 _MAX_IDS_PER_CALL = 100
 
 logger = logging.getLogger(__name__)
