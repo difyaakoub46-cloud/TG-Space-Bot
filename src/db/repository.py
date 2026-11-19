@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 _UNSAFE_QUERY_CHARS = re.compile(r"[^0-9A-Za-z\u0600-\u06FF .\-]")
 _MAX_QUERY_LENGTH = 80
 
+# A 429 or a 5xx is PostgREST being busy or briefly restarting, not a reason to
+# fail an upload: the same request is worth two more tries with a growing pause.
+_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.5
+
+
+def _is_worth_retrying(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code < 600
+
+
+def _retry_delay(attempt: int) -> float:
+    return _RETRY_BASE_DELAY * attempt
+
 
 class SupabaseError(RuntimeError):
     """Raised when the Supabase REST API answers with an error."""
@@ -73,7 +86,7 @@ class FileRepository:
                        json: Any = None, prefer: str | None = None) -> httpx.Response:
         url = self._url(path)
         last_error: Exception | None = None
-        for attempt in (1, 2):
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
                 response = await self._client.request(
                     method,
@@ -84,9 +97,19 @@ class FileRepository:
                 )
             except httpx.HTTPError as exc:
                 last_error = exc
-                if attempt == 2:
+                if attempt == _MAX_ATTEMPTS:
                     break
-                await asyncio.sleep(0.5 * attempt)
+                await asyncio.sleep(_retry_delay(attempt))
+                continue
+
+            if _is_worth_retrying(response.status_code) and attempt < _MAX_ATTEMPTS:
+                logger.warning(
+                    "PostgREST answered %s; retrying (%s of %s)",
+                    response.status_code,
+                    attempt,
+                    _MAX_ATTEMPTS - 1,
+                )
+                await asyncio.sleep(_retry_delay(attempt))
                 continue
 
             if response.status_code >= 400:
@@ -339,31 +362,11 @@ class FileRepository:
         disallowed PostgREST aggregates (PGRST123) and any ambiguity with the
         ``files`` table.
         """
-        stats_endpoint = f"{self._settings.supabase_url}/rest/v1/files_stats"
-        last_error: Exception | None = None
-        for attempt in (1, 2):
-            try:
-                response = await self._client.request(
-                    "GET",
-                    stats_endpoint,
-                    params={"select": "value", "setting": "eq.total_bytes", "limit": "1"},
-                    headers=self._headers(),
-                )
-            except httpx.HTTPError as exc:
-                last_error = exc
-                if attempt == 2:
-                    break
-                await asyncio.sleep(0.5 * attempt)
-                continue
-
-            if response.status_code >= 400:
-                raise SupabaseError(
-                    f"GET {stats_endpoint} (files_stats) failed with "
-                    f"{response.status_code}: {response.text[:300]}"
-                )
-            break
-        else:
-            raise SupabaseError(f"files_stats request failed: {last_error}")  # pragma: no cover
+        response = await self._request(
+            "GET",
+            path="files_stats",
+            params={"select": "value", "setting": "eq.total_bytes", "limit": "1"},
+        )
 
         rows = self._rows(response)
         if not rows:
