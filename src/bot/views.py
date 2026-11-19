@@ -261,24 +261,23 @@ async def set_screen(
 async def ack(
     callback: CallbackQuery, text: str | None = None, *, show_alert: bool = False
 ) -> None:
-    """Acknowledge a button press, then show whatever the handler wants to say.
+    """Show a short notice for a button press, if there is one to show.
 
     ``AckMiddleware`` already acknowledged the query when it arrived, so the
-    spinner is gone before the screen is fetched. Telegram rejects a second
-    acknowledgement; the text is then delivered as a normal message instead of a
-    popup, so a notice the user must see is never lost. A stale query (a button
-    from before a restart) must never surface as an error either.
+    spinner is gone before the screen is fetched and there is nothing left to
+    acknowledge here: Telegram rejects a second acknowledgement, which used to
+    cost a rejected API call on every tap. A call without text therefore does
+    nothing at all. The text is shown as an alert, and when the query is too old
+    to carry a popup it is delivered as a normal message instead, so a notice the
+    user must see is never lost.
     """
+    if not text:
+        return
     try:
-        if text is None:
-            await callback.answer()
-        else:
-            await callback.answer(text, show_alert=show_alert)
+        await callback.answer(text, show_alert=show_alert)
         return
     except TelegramAPIError:
         logger.debug("Could not acknowledge the callback query", exc_info=True)
-    if not text:
-        return
     try:
         if callback.message is not None:
             await callback.message.answer(text)
