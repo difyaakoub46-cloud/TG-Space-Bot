@@ -52,14 +52,30 @@ ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = ROOT / "migrations"
 
 EXPECTED_TABLES = ("files", "files_stats", "folders", "folder_files")
-EXPECTED_VIEWS = ("files_by_category", "folder_totals")
+EXPECTED_VIEWS = ("files_by_category", "folder_totals", "folders_overview")
 EXPECTED_TRIGGERS = ("files_sync_stats", "files_touch_updated_at")
 # Supabase creates these roles; a bare PostgreSQL does not have them, and 005
 # grants SELECT to them.
 SUPABASE_ROLES = ("anon", "authenticated", "service_role")
-# 011 closes the totals views and the date-picker function to the public roles.
+# 011 and 012 close the totals views to the public roles.
 PUBLIC_ROLES = ("anon", "authenticated")
 PERIODS_FUNCTION = "public.files_periods(text, text, text, integer, integer)"
+ORDERS_FUNCTION = "public.set_folder_orders(bigint, bigint[], integer[])"
+# The functions the bot calls, and who may execute each one. ``authenticated``
+# keeps ``files_periods`` because the date picker reaches it through PostgREST;
+# nothing but the bot's service role may move a user's favourites.
+FUNCTION_PRIVILEGES: tuple[tuple[str, str, dict[str, bool]], ...] = (
+    (
+        "files_periods",
+        PERIODS_FUNCTION,
+        {"anon": False, "authenticated": True, "service_role": True},
+    ),
+    (
+        "set_folder_orders",
+        ORDERS_FUNCTION,
+        {"anon": False, "authenticated": False, "service_role": True},
+    ),
+)
 
 
 class VerificationError(RuntimeError):
@@ -253,45 +269,51 @@ def check_view_security(conn: psycopg.Connection) -> list[str]:
 
 
 def check_function_security(conn: psycopg.Connection) -> list[str]:
-    """``files_periods`` must stay callable for the bot only.
+    """The date picker and the favourites reorder must stay callable for the bot only.
 
     A function is executable by ``PUBLIC`` as soon as it is created, and ``anon``
     inherits ``PUBLIC``, so revoking only from ``anon`` would leave it callable.
     """
     problems: list[str] = []
     cur = conn.cursor()
-    if not _rows(
-        cur,
-        """
-        select 1 from pg_proc p
-        join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname = 'files_periods'
-        """,
-    ):
-        return ["missing function public.files_periods"]
+    for name, signature, expected in FUNCTION_PRIVILEGES:
+        if not _rows(
+            cur,
+            """
+            select 1 from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = %s
+            """,
+            (name,),
+        ):
+            problems.append(f"missing function public.{name}")
+            continue
 
-    for role, expected in (("anon", False), ("authenticated", True), ("service_role", True)):
-        allowed = _rows(
-            cur, "select has_function_privilege(%s, %s, 'EXECUTE')", (role, PERIODS_FUNCTION)
+        for role, allowed_expected in expected.items():
+            allowed = _rows(
+                cur,
+                "select has_function_privilege(%s, %s, 'EXECUTE')",
+                (role, signature),
+            )[0][0]
+            if allowed is not allowed_expected:
+                problems.append(
+                    f"{name}: {role} has EXECUTE={allowed}; expected {allowed_expected}"
+                )
+
+        public_grants = _rows(
+            cur,
+            """
+            select count(*)
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+            where n.nspname = 'public' and p.proname = %s
+              and acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+            """,
+            (name,),
         )[0][0]
-        if allowed is not expected:
-            problems.append(
-                f"files_periods: {role} has EXECUTE={allowed}; expected {expected}"
-            )
-
-    public_grants = _rows(
-        cur,
-        """
-        select count(*)
-        from pg_proc p
-        join pg_namespace n on n.oid = p.pronamespace
-        cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
-        where n.nspname = 'public' and p.proname = 'files_periods'
-          and acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
-        """,
-    )[0][0]
-    if public_grants:
-        problems.append("files_periods is still executable by PUBLIC")
+        if public_grants:
+            problems.append(f"{name} is still executable by PUBLIC")
     return problems
 
 
@@ -337,6 +359,15 @@ def smoke_test(conn: psycopg.Connection) -> list[str]:
         )
         if folder_totals != [(1, 2500)]:
             problems.append(f"folder_totals returned {folder_totals}; expected [(1, 2500)]")
+
+        # 012's view must join the folder to those same totals in one row.
+        overview = _rows(
+            cur, "select files, bytes from public.folders_overview where id = %s", (folder_id,)
+        )
+        if overview != [(1, 2500)]:
+            problems.append(
+                f"folders_overview returned {overview} for the folder; expected [(1, 2500)]"
+            )
 
         cur.execute("delete from public.files where id = %s", (file_id,))
         links = _rows(cur, "select count(*) from public.folder_files")[0][0]
