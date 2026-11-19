@@ -409,6 +409,21 @@ async def status_text(
             + "، ".join(views.category_label(category) for category in uncovered)
         )
 
+    if not settings.join_guard_enabled():
+        lines.extend(
+            [
+                "",
+                pick(
+                    "⚠️ <b>Join guard is off</b>: links from «🔗 Join the groups» "
+                    "join directly, and an unlisted account that gets into a "
+                    "storage group is not removed. Set JOIN_GUARD=true and restart.",
+                    "⚠️ <b>حماية الانضمام معطّلة</b>: روابط «🔗 الانضمام إلى "
+                    "المجموعات» تُدخل مباشرة، ولا يُخرَج أي حساب غير مسموح إن دخل "
+                    "إحدى مجموعات التخزين. اضبط JOIN_GUARD=true ثم أعد التشغيل.",
+                ),
+            ]
+        )
+
     return "\n".join(lines)
 
 

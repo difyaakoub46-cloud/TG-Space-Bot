@@ -38,6 +38,7 @@ from src.bot.keyboards import JoinCB, MenuCB
 from src.core.config import ConfigurationError
 from src.core.i18n import pick
 from src.services.container import Services
+from src.services.storage import StorageService
 from src.utils.filetypes import parse_category
 
 logger = logging.getLogger(__name__)
@@ -60,8 +61,9 @@ def not_configured_text() -> str:
 # error text itself into an unhandled MESSAGE_TOO_LONG failure.
 _MAX_ALERT = 190
 
-# Old group id -> supergroup id, learned from Telegram's migrate answer.
-_MIGRATED: dict[int, int] = {}
+# A chat is named once: an unconfigured group would otherwise warn on every
+# single membership update it produces.
+_UNKNOWN_CHATS_WARNED: set[int] = set()
 
 # The owner joins as a plain member, so the bot must hand out the rights itself.
 # can_promote_members is deliberately left off: granting it needs the bot itself to
@@ -92,18 +94,28 @@ def _is_allowed(services: Services, user_id: int | None) -> bool:
     return int(user_id) in _allowed_ids(services)
 
 
+def _storage(services: Services) -> StorageService | None:
+    """The storage backend, which owns the group-id mapping (None before binding)."""
+    return getattr(services, "storage", None)
+
+
 def _storage_ids(services: Services) -> set[int]:
-    """Configured storage chats plus the supergroup ids learned for them."""
+    """Configured storage chats plus the supergroup ids learned for them.
+
+    The mapping lives in the storage service, so the upload path and this gate
+    always agree on the current id of an upgraded group — and a restart keeps the
+    gate working instead of silently forgetting the new id.
+    """
     ids: set[int] = set()
     configured = list(services.settings.storage_chats().values())
     fallback = services.settings.storage_chat_fallback
     if fallback is not None:
         configured.append(fallback)
+    storage = _storage(services)
     for chat_id in configured:
         ids.add(int(chat_id))
-        migrated = _MIGRATED.get(int(chat_id))
-        if migrated is not None:
-            ids.add(migrated)
+        if storage is not None:
+            ids.add(storage.current_chat_id(int(chat_id)))
     return ids
 
 
@@ -115,10 +127,12 @@ async def _alert(callback: CallbackQuery, text: str) -> None:
         logger.debug("Could not show an alert", exc_info=True)
 
 
-def _remember_migration(old_id: int, new_id: int) -> None:
-    if _MIGRATED.get(old_id) == new_id:
+def _remember_migration(services: Services, old_id: int, new_id: int) -> None:
+    """Follow a group upgrade in the one place that owns the mapping."""
+    storage = _storage(services)
+    if storage is not None:
+        storage.remember_migration(old_id, new_id)
         return
-    _MIGRATED[old_id] = new_id
     logger.warning(
         "Storage chat %s is now the supergroup %s: update TG_STORAGE_CHAT_* in the "
         "environment to the new id.",
@@ -127,8 +141,23 @@ def _remember_migration(old_id: int, new_id: int) -> None:
     )
 
 
+def _warn_unknown_chat(kind: str, chat_id: int) -> None:
+    """Say out loud that a group is outside the gate, instead of staying silent."""
+    if chat_id in _UNKNOWN_CHATS_WARNED:
+        return
+    _UNKNOWN_CHATS_WARNED.add(chat_id)
+    logger.warning(
+        "Ignoring a %s update from chat %s: it is not one of the configured "
+        "storage chats, so the join guard does not cover it. If that group was "
+        "upgraded to a supergroup, update TG_STORAGE_CHAT_* to its new id.",
+        kind,
+        chat_id,
+    )
+
+
 async def _create_invite(
     bot: Bot,
+    services: Services,
     chat_id: int,
     name: str,
     *,
@@ -160,7 +189,7 @@ async def _create_invite(
         return link, chat_id, None
     except TelegramMigrateToChat as exc:
         new_id = int(exc.migrate_to_chat_id)
-        _remember_migration(int(chat_id), new_id)
+        _remember_migration(services, int(chat_id), new_id)
         link = await bot.create_chat_invite_link(chat_id=new_id, **kwargs)
         return link, new_id, int(chat_id)
 
@@ -240,6 +269,7 @@ async def join_link_callback(
     try:
         link, used_id, old_id = await _create_invite(
             bot,
+            services,
             chat_id,
             invite_name,
             join_request=join_request,
@@ -247,7 +277,7 @@ async def join_link_callback(
         )
     except TelegramMigrateToChat as exc:
         new_id = int(exc.migrate_to_chat_id)
-        _remember_migration(int(chat_id), new_id)
+        _remember_migration(services, int(chat_id), new_id)
         logger.warning("Could not create an invite link for %s: %s", chat_id, exc)
         await _alert(
             callback,
@@ -314,7 +344,12 @@ async def on_chat_member(
 ) -> None:
     """Guard a storage group: promote listed accounts, remove everybody else."""
     user_id = int(update.new_chat_member.user.id)
-    if update.chat.id not in _storage_ids(services):
+    # The bot's own membership is never an intruder: a bot cannot ban itself, so
+    # this used to fail and page the owner with a false alarm on every join.
+    if user_id == int(getattr(bot, "id", 0) or 0):
+        return
+    if int(update.chat.id) not in _storage_ids(services):
+        _warn_unknown_chat("membership", int(update.chat.id))
         return
 
     if not _is_allowed(services, user_id):
@@ -443,6 +478,7 @@ async def on_join_request(
         return
     chat_id = int(request.chat.id)
     if chat_id not in _storage_ids(services):
+        _warn_unknown_chat("join request", chat_id)
         return
 
     user_id = int(request.from_user.id)

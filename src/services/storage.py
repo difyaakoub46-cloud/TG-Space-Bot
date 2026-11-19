@@ -86,22 +86,39 @@ class StorageService:
     def _current(self, chat_id: int) -> int:
         return self._migrated.get(chat_id, chat_id)
 
+    def current_chat_id(self, chat_id: int) -> int:
+        """The id Telegram answers today for a configured group id.
+
+        A group that Telegram upgraded to a supergroup keeps its old id in the
+        environment until somebody updates it. Uploads and the join gate both read
+        the learned id from here, so the two can never disagree about which chat a
+        storage group is.
+        """
+        return self._current(int(chat_id))
+
+    def remember_migration(self, old_id: int, new_id: int) -> None:
+        """Follow a group -> supergroup upgrade for uploads and for the gate."""
+        old_id, new_id = int(old_id), int(new_id)
+        if self._migrated.get(old_id) == new_id and self._migrated.get(new_id) == new_id:
+            return
+        self._migrated[old_id] = new_id
+        self._migrated[new_id] = new_id
+        logger.warning(
+            "Storage chat %s was upgraded to the supergroup %s; using the new id "
+            "from now on. Update TG_STORAGE_CHAT_* in the environment to make it "
+            "permanent.",
+            old_id,
+            new_id,
+        )
+
     async def _call(self, method, chat_id: int, **kwargs: Any) -> tuple[Any, int]:
         """Run a chat method, following a group-to-supergroup migration once."""
         target = self._current(chat_id)
         try:
             return await call_with_retry(method, chat_id=target, **kwargs), target
         except TelegramMigrateToChat as exc:
-            new_id = exc.migrate_to_chat_id
-            logger.warning(
-                "Storage chat %s was upgraded to the supergroup %s; using the new "
-                "id from now on. Update TG_STORAGE_CHAT_* in the environment to "
-                "make it permanent.",
-                target,
-                new_id,
-            )
-            self._migrated[chat_id] = new_id
-            self._migrated[target] = new_id
+            new_id = int(exc.migrate_to_chat_id)
+            self.remember_migration(target, new_id)
             result = await call_with_retry(method, chat_id=new_id, **kwargs)
             return result, new_id
 

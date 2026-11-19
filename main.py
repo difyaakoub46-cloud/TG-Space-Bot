@@ -61,6 +61,18 @@ async def report_storage_health(settings: Settings, services) -> None:
     Without this the first broken group is discovered at the first upload; here
     the mismatch is reported before any file is involved.
     """
+    if settings.join_guard_enabled():
+        logger.info(
+            "Join guard is on: invite links are join requests approved for the "
+            "allow-list only"
+        )
+    else:
+        logger.warning(
+            "JOIN_GUARD is off: invite links join directly, and an unlisted account "
+            "that gets into a storage group is NOT removed. Set JOIN_GUARD=true to "
+            "restore the gate."
+        )
+
     configured = settings.storage_chats()
     # The fallback group is an emergency store, not a library group: a category
     # without its own group is still reported as missing.
