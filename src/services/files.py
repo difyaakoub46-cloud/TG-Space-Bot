@@ -890,8 +890,12 @@ class FileStorageServices:
             return await self._repository.get_folder(folder_id, user_id)
 
         favorites[index], favorites[target] = favorites[target], favorites[index]
-        for position, folder in enumerate(favorites):
-            await self._repository.set_folder_order(folder.id, user_id, position)
+        # One request for the whole list: the repository writes every position in
+        # a single call instead of one PATCH per favourite.
+        await self._repository.set_folder_orders(
+            user_id,
+            [(folder.id, position) for position, folder in enumerate(favorites)],
+        )
         self._cache.invalidate_prefix("folders:")
         return await self._repository.get_folder(folder_id, user_id)
 

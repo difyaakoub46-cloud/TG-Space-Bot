@@ -609,6 +609,39 @@ class FileRepository:
             prefer="return=minimal",
         )
 
+    async def set_folder_orders(
+        self, user_id: int, orders: list[tuple[str, int]]
+    ) -> None:
+        """Store the position of every favourite folder in one request.
+
+        Moving a favourite renumbers the whole list, and one PATCH per folder made
+        that as slow as the list is long. ``set_folder_orders`` writes all the
+        positions in a single statement, so the move costs one round trip. A
+        database that has not run migration 013 answers with an error, and the
+        positions then go one by one exactly as before.
+        """
+        if not orders:
+            return
+        try:
+            await self._request(
+                "POST",
+                path="rpc/set_folder_orders",
+                json={
+                    "p_user_id": int(user_id),
+                    "p_folder_ids": [int(folder_id) for folder_id, _ in orders],
+                    "p_orders": [position for _, position in orders],
+                },
+                prefer="return=minimal",
+            )
+        except SupabaseError:
+            logger.warning(
+                "set_folder_orders is unavailable; writing the positions one by "
+                "one (run migration 013)",
+                exc_info=True,
+            )
+            for folder_id, position in orders:
+                await self.set_folder_order(folder_id, user_id, position)
+
     async def delete_folder(self, folder_id: str, user_id: int) -> bool:
         """Delete the folder row only; the files themselves are never touched.
 
