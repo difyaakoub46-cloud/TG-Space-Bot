@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 _UNSAFE_QUERY_CHARS = re.compile(r"[^0-9A-Za-z\u0600-\u06FF .\-]")
 _MAX_QUERY_LENGTH = 80
 
+# One row of ``folders_overview``: the folder itself plus its totals.
+_FOLDER_FIELDS = "id,name,is_favorite,favorite_order,files,bytes"
+
 # A 429 or a 5xx is PostgREST being busy or briefly restarting, not a reason to
 # fail an upload: the same request is worth two more tries with a growing pause.
 _MAX_ATTEMPTS = 3
@@ -398,8 +401,60 @@ class FileRepository:
     # ------------------------------------------------------------------ #
     # Virtual folders
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _overview_folder(row: Mapping[str, Any]) -> Folder:
+        """One ``folders_overview`` row as a folder, totals included."""
+        return Folder(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            count=int(row.get("files") or 0),
+            bytes=int(row.get("bytes") or 0),
+            favorite=bool(row.get("is_favorite")),
+            favorite_order=_optional_int(row.get("favorite_order")),
+        )
+
+    async def _folders_overview(
+        self, params: Mapping[str, str]
+    ) -> list[Folder] | None:
+        """Folders with their totals in one request, or ``None`` without the view.
+
+        ``folders_overview`` joins each folder to its own counts and bytes, so the
+        folders screen waits for one round trip instead of two. A database that
+        has not run migration 012 yet answers with an error, and the caller falls
+        back to the older two requests: the screen still renders, only slower.
+        """
+        try:
+            response = await self._request(
+                "GET", path="folders_overview", params=params
+            )
+        except SupabaseError:
+            logger.warning(
+                "folders_overview is unavailable; falling back to folders + "
+                "folder_totals (run migration 012)",
+                exc_info=True,
+            )
+            return None
+        return [self._overview_folder(row) for row in self._rows(response)]
+
     async def list_folders(self, user_id: int) -> list[Folder]:
         """Folders of one user, each with its file count and total size."""
+        folders = await self._folders_overview(
+            {
+                "select": _FOLDER_FIELDS,
+                "user_id": f"eq.{user_id}",
+                "order": "name.asc",
+            }
+        )
+        if folders is None:
+            folders = await self._list_folders_separately(user_id)
+        # Sorted in Python as well: the database collation is not guaranteed to
+        # order Arabic and Latin names the way the user expects.
+        return sorted(
+            folders, key=lambda folder: (folder.name.casefold(), folder.name)
+        )
+
+    async def _list_folders_separately(self, user_id: int) -> list[Folder]:
+        """The pre-012 path: the folders list, then their totals."""
         response = await self._request(
             "GET",
             path="folders",
@@ -409,20 +464,15 @@ class FileRepository:
                 "order": "name.asc",
             },
         )
-        # Sorted in Python as well: the database collation is not guaranteed to
-        # order Arabic and Latin names the way the user expects.
-        folders = sorted(
-            (
-                Folder(
-                    id=str(row["id"]),
-                    name=str(row["name"]),
-                    favorite=bool(row.get("is_favorite")),
-                    favorite_order=_optional_int(row.get("favorite_order")),
-                )
-                for row in self._rows(response)
-            ),
-            key=lambda folder: (folder.name.casefold(), folder.name),
-        )
+        folders = [
+            Folder(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                favorite=bool(row.get("is_favorite")),
+                favorite_order=_optional_int(row.get("favorite_order")),
+            )
+            for row in self._rows(response)
+        ]
         if not folders:
             return []
 
@@ -489,6 +539,18 @@ class FileRepository:
         return Folder(id=str(rows[0]["id"]), name=str(rows[0]["name"]))
 
     async def get_folder(self, folder_id: str, user_id: int) -> Folder | None:
+        """One folder with its totals — one request, not two."""
+        found = await self._folders_overview(
+            {
+                "select": _FOLDER_FIELDS,
+                "id": f"eq.{folder_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            }
+        )
+        if found is not None:
+            return found[0] if found else None
+
         response = await self._request(
             "GET",
             path="folders",
