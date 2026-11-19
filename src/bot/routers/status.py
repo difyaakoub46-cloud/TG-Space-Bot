@@ -72,7 +72,17 @@ async def permissions_callback(
 async def permissions_refresh_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
 ) -> None:
-    """Read the administrator rights of every group again, in place."""
+    """Read the administrator rights of every group again, in place.
+
+    The screen itself reuses the report for a few seconds, so pressing «Re-check»
+    used to redraw the same stored answer. ``refresh=True`` drops that report and
+    asks Telegram about every group now; the screen opened right after reads the
+    fresh one, so this costs one real check, not two.
+    """
+    try:
+        await services.storage.check_chats(refresh=True)
+    except Exception:  # noqa: BLE001 - the screen reports the failure itself
+        logger.exception("Could not re-check the storage groups")
     await navigation.navigate_callback(
         callback, state, bot, services, {"k": "permissions"}, push=False
     )
