@@ -17,6 +17,7 @@ from src.bot.routers import (
     fallback,
     file_list,
     folders,
+    links,
     pending,
     search,
     sort,
@@ -87,6 +88,9 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dispatcher.include_routers(
         commands.router,
         upload.router,
+        # Before «🔍 Search»: a link pasted on the search screen is saved, not
+        # turned into a query.
+        links.router,
         search.router,
         file_list.router,
         browse.router,

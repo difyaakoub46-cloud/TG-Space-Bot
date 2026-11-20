@@ -23,6 +23,7 @@ from src.services.cache import TTLCache
 from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
+from src.utils.links import Link
 from src.utils.sorting import (
     SortSpec,
     database_order,
@@ -201,6 +202,14 @@ class DuplicateFileError(Exception):
         self.record = record
 
 
+class DuplicateLinkError(Exception):
+    """Raised when the same link is already in the links list."""
+
+    def __init__(self, record: StoredFile) -> None:
+        super().__init__(f"الرابط موجود أصلاً: {record.link_url}")
+        self.record = record
+
+
 class QuarantinedFileError(Exception):
     """The file could not be registered, so it is held in the fallback group."""
 
@@ -219,6 +228,19 @@ class RepairReport:
     kept: int = 0
     database_error: str | None = None
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class LinkSaveReport:
+    """What one message with links produced, link by link."""
+
+    saved: list[StoredFile] = field(default_factory=list)
+    duplicates: list[StoredFile] = field(default_factory=list)
+    failures: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.saved or self.duplicates or self.failures)
 
 
 class FileStorageServices:
@@ -447,6 +469,68 @@ class FileStorageServices:
             reason,
         )
         return QuarantinedFileError(entry)
+
+    async def save_links(self, message: Message, links: list[Link]) -> LinkSaveReport:
+        """Save every link of a message, one row and one copy each.
+
+        A link that is already listed is reported as such instead of being copied
+        again, and a link whose copy or registration fails leaves nothing behind:
+        the copy is removed, so the group never holds a message no row describes.
+        """
+        report = LinkSaveReport()
+        for link in links:
+            try:
+                report.saved.append(await self.save_link(message, link))
+            except DuplicateLinkError as exc:
+                report.duplicates.append(exc.record)
+            except (SupabaseError, TelegramAPIError, OSError) as exc:
+                report.failures.append(
+                    (link.url, " ".join(str(exc).split())[:200] or type(exc).__name__)
+                )
+        return report
+
+    async def save_link(self, message: Message, link: Link) -> StoredFile:
+        """Copy the message into the links group and record the link."""
+        existing = await self._repository.find_link(link.url)
+        if existing is not None:
+            raise DuplicateLinkError(existing)
+
+        storage = self.storage
+        chat_id, message_id = await storage.upload_link(message)
+        try:
+            record = await self._repository.create(
+                file_id="",
+                file_unique_id=None,
+                file_name=link.url,
+                file_type=None,
+                category=FileCategory.other.value,
+                file_size=0,
+                content_hash=None,
+                user_id=message.from_user.id if message.from_user else None,
+                chat_id=chat_id,
+                message_id=message_id,
+                link_type=link.link_type,
+                link_url=link.url,
+            )
+        except SupabaseError as exc:
+            # The copy must never outlive its row: the group would hold a link the
+            # screen cannot show, and no action could ever reach it again.
+            await storage.remove(chat_id, message_id)
+            if _is_duplicate(exc):
+                duplicate = await self._repository.find_link(link.url)
+                if duplicate is not None:
+                    raise DuplicateLinkError(duplicate) from exc
+            raise
+
+        logger.info(
+            "Stored %s link %s as %s/%s",
+            record.link_type,
+            link.url,
+            chat_id,
+            message_id,
+        )
+        self._invalidate_catalog()
+        return record
 
     async def repair_pending(self) -> RepairReport:
         """Register every held file and move it into its real storage group.
