@@ -153,7 +153,11 @@ async def test_a_guarded_link_is_a_join_request_that_expires(monkeypatch, tmp_pa
     assert "member_limit" not in created
     assert created["expire_date"] == timedelta(seconds=600)
     assert captured["screen"] == {"k": "join_groups"}
-    assert "https://t.me/+-100222" in str(captured["notice"])
+    notice = str(captured["notice"])
+    assert "https://t.me/+-100222" in notice
+    # The screen describes a join request, not a single-use link.
+    assert "only asks to join" in notice
+    assert "works once" not in notice
 
 
 async def test_without_the_guard_the_link_is_single_use_and_still_expires(
@@ -164,12 +168,16 @@ async def test_without_the_guard_the_link_is_single_use_and_still_expires(
     )
     bot = GateBot()
 
-    await link_from_button(monkeypatch, settings, bot)
+    captured = await link_from_button(monkeypatch, settings, bot)
 
     created = bot.created[0]
     assert created["member_limit"] == 1
     assert "creates_join_request" not in created
     assert created["expire_date"] == timedelta(minutes=15)
+    # Without the guard the link really is a single-use link.
+    notice = str(captured["notice"])
+    assert "works once" in notice
+    assert "only asks to join" not in notice
 
 
 # --------------------------------------------------------------------------- #

@@ -1130,16 +1130,25 @@ def join_groups_text() -> str:
     )
 
 
-def invite_text(link: str, label: str) -> str:
+def invite_text(link: str, label: str, *, join_request: bool = False) -> str:
+    """The invite screen; with the guard on the link is a join request, not a single use."""
+    hint = (
+        pick(
+            "The link only asks to join, and it stops working after its first use:",
+            "الرابط طلب انضمام فقط، ويتوقف عمله بعد أول استخدام:",
+        )
+        if join_request
+        else pick(
+            "The link works once, then it stops working:",
+            "الرابط صالح لاستخدام واحد فقط ثم يصبح معطّلاً:",
+        )
+    )
     return "\n".join(
         [
             pick("✅ <b>New invite link</b>", "✅ <b>رابط دعوة جديد</b>"),
             "",
             pick(f"Group: {_escape(label)}", f"المجموعة: {_escape(label)}"),
-            pick(
-                "The link works once, then it stops working:",
-                "الرابط صالح لاستخدام واحد فقط ثم يصبح معطّلاً:",
-            ),
+            hint,
             "",
             f"<code>{_escape(link)}</code>",
         ]

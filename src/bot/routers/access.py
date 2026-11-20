@@ -303,7 +303,7 @@ async def join_link_callback(
         return
 
     logger.info("Created a one-time invite link for %s", label)
-    notice = views.invite_text(link.invite_link, label)
+    notice = views.invite_text(link.invite_link, label, join_request=join_request)
     ttl_minutes = ttl_seconds // 60
     if join_request:
         notice += pick(
