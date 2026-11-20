@@ -91,6 +91,20 @@ def classify(url: str) -> str:
     return TELEGRAM if host.lower() in TELEGRAM_HOSTS else GLOBAL
 
 
+def _has_host(url: str) -> bool:
+    """Whether a web address really names a host.
+
+    «https://» followed by a word is not a link: the text after the scheme has to
+    look like a domain (a dot inside it), so a sentence that happens to start with
+    a scheme is not saved as if it were an address.
+    """
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    return "." in host and not host.startswith(".") and not host.endswith(".")
+
+
 def extract_links(text: str | None) -> list[Link]:
     """Every link of a message, de-duplicated, in the order they appear."""
     if not text:
@@ -100,7 +114,10 @@ def extract_links(text: str | None) -> list[Link]:
         url = _normalise(match.group(0))
         if not url or url in found:
             continue
-        found[url] = Link(url=url, link_type=classify(url))
+        link_type = classify(url)
+        if link_type == GLOBAL and not _has_host(url):
+            continue
+        found[url] = Link(url=url, link_type=link_type)
     return list(found.values())
 
 

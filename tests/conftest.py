@@ -30,6 +30,7 @@ from src.utils.filetypes import FileCategory  # noqa: E402
 DOCUMENTS_GROUP = -100222
 IMAGES_GROUP = -100111
 FALLBACK_GROUP = -100999
+LINKS_GROUP = -100333
 
 BASE_SETTINGS: dict[str, Any] = {
     "bot_token": "123:test-token",
@@ -75,6 +76,8 @@ class FakeRepository:
 
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
+        # Links already on record, by URL: what ``find_link`` answers.
+        self.links: dict[str, Any] = {}
         self.existing: Any = None
         self.fail_find: Exception | None = None
         self.fail_create: Exception | None = None
@@ -85,6 +88,11 @@ class FakeRepository:
         if self.fail_find is not None:
             raise self.fail_find
         return self.existing
+
+    async def find_link(self, link_url: str):
+        if self.fail_find is not None:
+            raise self.fail_find
+        return self.links.get(link_url)
 
     async def create(self, **fields: Any):
         if self.fail_create is not None:
@@ -97,6 +105,9 @@ class FakeRepository:
             storage_chat_id=int(fields.get("chat_id") or 0),
             storage_message_id=int(fields.get("message_id") or 0),
             content_hash=fields.get("content_hash"),
+            link_type=fields.get("link_type"),
+            link_url=fields.get("link_url"),
+            created_at=datetime.now(timezone.utc),
         )
 
     async def count(self, **_: Any) -> int:

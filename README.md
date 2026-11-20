@@ -99,6 +99,7 @@ them are idempotent, so running it again after a new file lands is safe.
 | `011` | `security_invoker` on `files_by_category` / `folder_totals`, revoked from `anon` and `authenticated`; `files_periods` executable only by `authenticated` and `service_role` |
 | `012` | `folders_overview`: every folder with its file count and byte total in one row |
 | `013` | `set_folder_orders(...)`: writes the position of every favourite in one call |
+| `014` | `link_type` / `link_url`: links live beside the files (NULL = a file), one row per URL, and the totals views count files only |
 
 `011`–`013` are what make the screens cheap, and they are readable/executable by
 the **service key only**. Without them the bot still renders (it falls back to the
@@ -372,7 +373,8 @@ unknown active sessions.
 Storage group variables use the **singular** category name —
 `TG_STORAGE_CHAT_DOCUMENT`, `TG_STORAGE_CHAT_IMAGE`, `TG_STORAGE_CHAT_VIDEO`,
 `TG_STORAGE_CHAT_AUDIO`, `TG_STORAGE_CHAT_ARCHIVE`, `TG_STORAGE_CHAT_OTHER`
-(one group may serve several categories). A category with no group of its own is
+(one group may serve several categories). `TG_STORAGE_CHAT_LINKS` is separate: it
+holds the saved links, not a library category. A category with no group of its own is
 reported as missing (the emergency group does not cover it), and uploads of that
 category are refused with a message naming the variable to add.
 
