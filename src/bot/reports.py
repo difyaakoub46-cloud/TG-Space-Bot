@@ -7,7 +7,6 @@ screens.
 
 from __future__ import annotations
 
-import html
 import logging
 from collections.abc import Sequence
 
@@ -17,15 +16,11 @@ from src.core.i18n import pick
 from src.services.files import RepairReport
 from src.services.storage import StorageChatCheck
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number
+from src.utils.formatters import escape_text, format_number
 
 _MAX_REASON = 200
 
 logger = logging.getLogger(__name__)
-
-
-def _escape(value: object) -> str:
-    return html.escape(str(value), quote=False)
 
 
 def _labels(check: StorageChatCheck) -> str:
@@ -88,8 +83,8 @@ def storage_check_text(
             if check.reason:
                 lines.append(
                     pick(
-                        f"  Reason: {_escape(check.reason[:_MAX_REASON])}",
-                        f"  السبب: {_escape(check.reason[:_MAX_REASON])}",
+                        f"  Reason: {escape_text(check.reason[:_MAX_REASON])}",
+                        f"  السبب: {escape_text(check.reason[:_MAX_REASON])}",
                     )
                 )
         lines.append("")

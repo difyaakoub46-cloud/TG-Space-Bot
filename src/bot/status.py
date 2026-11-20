@@ -14,7 +14,6 @@ missing right per group.
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 import time
 from collections.abc import Sequence
@@ -28,17 +27,13 @@ from src.db.repository import SupabaseError
 from src.services.container import Services
 from src.services.storage import REQUIRED_RIGHTS, StorageChatCheck
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number
+from src.utils.formatters import escape_text, format_number
 
 logger = logging.getLogger(__name__)
 
 _RIGHT_LABELS: dict[str, tuple[str, str]] = {
     name: (english, arabic) for name, english, arabic in REQUIRED_RIGHTS
 }
-
-
-def _escape(value: object) -> str:
-    return html.escape(str(value), quote=False)
 
 
 def _now() -> str:
@@ -211,7 +206,7 @@ async def _bot_identity(bot) -> str:
         logger.warning("Could not read the bot identity", exc_info=True)
         return pick("could not reach Telegram", "تعذّر الاتصال بتيليغرام")
     handle = f"@{me.username}" if me.username else me.full_name
-    text = f"{_escape(handle)} · <code>{me.id}</code>"
+    text = f"{escape_text(handle)} · <code>{me.id}</code>"
     _IDENTITY_CACHE[id(bot)] = text
     return text
 
@@ -268,9 +263,9 @@ async def status_text(
         "",
         pick("🗄 <b>Database</b> (Supabase)", "🗄 <b>قاعدة البيانات</b> (Supabase)"),
         pick(
-            f"Table: <code>{_escape(settings.supabase_table)}</code> · "
+            f"Table: <code>{escape_text(settings.supabase_table)}</code> · "
             f"Latency: {latency_ms:.0f} ms",
-            f"الجدول: <code>{_escape(settings.supabase_table)}</code> · "
+            f"الجدول: <code>{escape_text(settings.supabase_table)}</code> · "
             f"زمن الاستجابة: {latency_ms:.0f} م.ث",
         ),
         # The file counts and the total size live in «Statistics», so they are not

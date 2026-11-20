@@ -7,7 +7,6 @@ each other: a screen is never half translated.
 
 from __future__ import annotations
 
-import html
 import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -20,7 +19,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from src.core.i18n import Language, language_name, pick, plural
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
-from src.utils.formatters import format_number, human_size, human_total
+from src.utils.formatters import escape_text, format_number, human_size, human_total
 from src.utils.sorting import SortDirection, SortField, SortSpec
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -71,10 +70,6 @@ def category_label(category: FileCategory | str) -> str:
 def fallback_label() -> str:
     """One label for the emergency group (a store, never a library category)."""
     return pick("🛟 Emergency", "🛟 احتياطية")
-
-
-def _escape(value: Any) -> str:
-    return html.escape(str(value), quote=False)
 
 
 # The two nouns every count on a screen is made of, in both languages.
@@ -368,9 +363,9 @@ def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
         [
             pick("👋 Welcome to TG-Space-Bot", "👋 مرحباً بك في TG-Space-Bot"),
             pick(
-                f"🗂 {count_files(total_files)} · {_escape(human_total(total_bytes))} "
+                f"🗂 {count_files(total_files)} · {escape_text(human_total(total_bytes))} "
                 "— send a file to save it, or use the buttons below.",
-                f"🗂 {count_files(total_files)} · {_escape(human_total(total_bytes))} "
+                f"🗂 {count_files(total_files)} · {escape_text(human_total(total_bytes))} "
                 "— أرسل ملفاً لحفظه، أو استخدم الأزرار أدناه.",
             ),
         ]
@@ -486,8 +481,8 @@ def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) ->
             f"إجمالي الملفات: <b>{format_number(total)}</b>",
         ),
         pick(
-            f"Total size: <b>{_escape(human_size(total_bytes))}</b>",
-            f"الحجم الإجمالي: <b>{_escape(human_size(total_bytes))}</b>",
+            f"Total size: <b>{escape_text(human_size(total_bytes))}</b>",
+            f"الحجم الإجمالي: <b>{escape_text(human_size(total_bytes))}</b>",
         ),
     ]
     if categories:
@@ -527,7 +522,7 @@ def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) ->
         if check.reachable or not check.reason:
             continue
         lines.append(
-            f"   ⚠️ {_storage_check_label(check)}: {_escape(check.reason[:160])}"
+            f"   ⚠️ {_storage_check_label(check)}: {escape_text(check.reason[:160])}"
         )
     return "\n".join(lines)
 
@@ -549,8 +544,8 @@ def categories_text(
         pick("📚 <b>Library</b>", "📚 <b>المكتبة</b>"),
         "",
         pick(
-            f"Total: {count_files(total_files)} · {_escape(human_total(total_bytes))}",
-            f"الإجمالي: {count_files(total_files)} · {_escape(human_total(total_bytes))}",
+            f"Total: {count_files(total_files)} · {escape_text(human_total(total_bytes))}",
+            f"الإجمالي: {count_files(total_files)} · {escape_text(human_total(total_bytes))}",
         ),
         "",
         pick("<b>Categories</b>", "<b>الفئات</b>"),
@@ -561,7 +556,7 @@ def categories_text(
         count, size = totals[category]
         lines.append(
             f"{category_label(category)} — {count_files(count)} · "
-            f"{_escape(human_total(size))}"
+            f"{escape_text(human_total(size))}"
         )
 
     lines.append("")
@@ -569,7 +564,7 @@ def categories_text(
         lines.append(pick("<b>⭐ Favourite folders</b>", "<b>⭐ المجلدات المفضلة</b>"))
         for folder in favorites:
             lines.append(
-                f"⭐ {_escape(folder.name)} — {count_files(folder.count)}"
+                f"⭐ {escape_text(folder.name)} — {count_files(folder.count)}"
             )
     else:
         lines.append(
@@ -608,7 +603,7 @@ def category_text(
         else (len(files), sum(file.size_bytes for file in files))
     )
     lines = [
-        f"{label} — {count_files(count)} · {_escape(human_total(size))}",
+        f"{label} — {count_files(count)} · {escape_text(human_total(size))}",
         "",
     ]
     if not files:
@@ -685,9 +680,9 @@ def pending_text(
             )
     if latest_name:
         lines.append("")
-        lines.append(pick(f"Latest file: {_escape(latest_name)}", f"آخر ملف: {_escape(latest_name)}"))
+        lines.append(pick(f"Latest file: {escape_text(latest_name)}", f"آخر ملف: {escape_text(latest_name)}"))
     if latest_reason:
-        lines.append(pick(f"Reason: {_escape(latest_reason)}", f"سبب الفشل: {_escape(latest_reason)}"))
+        lines.append(pick(f"Reason: {escape_text(latest_reason)}", f"سبب الفشل: {escape_text(latest_reason)}"))
     lines.append("")
     lines.append(
         pick(
@@ -711,11 +706,11 @@ def quarantined_text(
             "It could not be registered in the database, so it did not enter the library.",
             "تعذّر تسجيل الملف في قاعدة البيانات، فلم يُنقل إلى المكتبة.",
         ),
-        pick(f"File: {_escape(file_name)}", f"الملف: {_escape(file_name)}"),
+        pick(f"File: {escape_text(file_name)}", f"الملف: {escape_text(file_name)}"),
         pick(f"Category: {category_label(category)}", f"الفئة: {category_label(category)}"),
     ]
     if reason:
-        lines.append(pick(f"Reason: {_escape(reason)}", f"السبب: {_escape(reason)}"))
+        lines.append(pick(f"Reason: {escape_text(reason)}", f"السبب: {escape_text(reason)}"))
     lines.append("")
     lines.append(
         pick(
@@ -750,8 +745,8 @@ def search_results_text(
     total: int | None = None,
 ) -> str:
     headline = pick(
-        f"🔍 <b>Results for «{_escape(query)}»</b>",
-        f"🔍 <b>نتائج البحث عن «{_escape(query)}»</b>",
+        f"🔍 <b>Results for «{escape_text(query)}»</b>",
+        f"🔍 <b>نتائج البحث عن «{escape_text(query)}»</b>",
     )
     if not results:
         return f"{headline}\n\n{pick('No matching files.', 'لا توجد نتائج مطابقة.')}"
@@ -761,7 +756,7 @@ def search_results_text(
         lines.append(pick(f"Results: {format_number(total)}", f"عدد النتائج: {format_number(total)}"))
     lines.append("")
     for file in results:
-        lines.append(f"• {_escape(file.file_name)} — {_escape(file.size_human)}")
+        lines.append(f"• {escape_text(file.file_name)} — {escape_text(file.size_human)}")
     if total_pages > 1:
         lines.append("")
         lines.append(pick(f"Page {page} of {total_pages}", f"الصفحة {page} من {total_pages}"))
@@ -772,15 +767,15 @@ def file_saved_text(record: StoredFile) -> str:
     lines = [
         pick("✅ <b>The file was saved</b>", "✅ <b>تم حفظ الملف</b>"),
         "",
-        pick(f"Name: {_escape(record.file_name)}", f"الاسم: {_escape(record.file_name)}"),
+        pick(f"Name: {escape_text(record.file_name)}", f"الاسم: {escape_text(record.file_name)}"),
         pick(f"Category: {category_label(record.category)}", f"الفئة: {category_label(record.category)}"),
-        pick(f"Size: {_escape(record.size_human)}", f"الحجم: {_escape(record.size_human)}"),
+        pick(f"Size: {escape_text(record.size_human)}", f"الحجم: {escape_text(record.size_human)}"),
     ]
     if record.hash_short:
         lines.append(
             pick(
-                f"Fingerprint: <code>{_escape(record.hash_short)}</code>",
-                f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>",
+                f"Fingerprint: <code>{escape_text(record.hash_short)}</code>",
+                f"بصمة المحتوى: <code>{escape_text(record.hash_short)}</code>",
             )
         )
     return "\n".join(lines)
@@ -808,8 +803,8 @@ def files_saved_text(
     ]
     for index, record in enumerate(records, start=1):
         lines.append(
-            f"{index}. 📄 {_escape(record.file_name)} — "
-            f"{category_label(record.category)} · {_escape(record.size_human)}"
+            f"{index}. 📄 {escape_text(record.file_name)} — "
+            f"{category_label(record.category)} · {escape_text(record.size_human)}"
         )
 
     if duplicates:
@@ -823,7 +818,7 @@ def files_saved_text(
             ]
         )
         for record in duplicates:
-            lines.append(f"• 📄 {_escape(record.file_name)}")
+            lines.append(f"• 📄 {escape_text(record.file_name)}")
 
     if quarantined:
         lines.extend(
@@ -836,7 +831,7 @@ def files_saved_text(
             ]
         )
         for pending in quarantined:
-            lines.append(f"• 📄 {_escape(pending.file_name)}")
+            lines.append(f"• 📄 {escape_text(pending.file_name)}")
 
     if failures:
         lines.extend(
@@ -846,7 +841,7 @@ def files_saved_text(
             ]
         )
         for file_name, reason in failures:
-            lines.append(f"• {_escape(file_name)} — <code>{reason}</code>")
+            lines.append(f"• {escape_text(file_name)} — <code>{reason}</code>")
 
     if records or duplicates:
         lines.extend(
@@ -869,11 +864,11 @@ def duplicate_file_text(record: StoredFile) -> str:
         [
             pick("♻️ <b>The file is already stored</b>", "♻️ <b>الملف موجود أصلاً</b>"),
             "",
-            pick(f"Name: {_escape(record.file_name)}", f"الاسم: {_escape(record.file_name)}"),
-            pick(f"Size: {_escape(record.size_human)}", f"الحجم: {_escape(record.size_human)}"),
+            pick(f"Name: {escape_text(record.file_name)}", f"الاسم: {escape_text(record.file_name)}"),
+            pick(f"Size: {escape_text(record.size_human)}", f"الحجم: {escape_text(record.size_human)}"),
             pick(
-                f"Saved on: {_escape(record.created_human)}",
-                f"تاريخ الحفظ: {_escape(record.created_human)}",
+                f"Saved on: {escape_text(record.created_human)}",
+                f"تاريخ الحفظ: {escape_text(record.created_human)}",
             ),
             "",
             pick(
@@ -886,22 +881,22 @@ def duplicate_file_text(record: StoredFile) -> str:
 
 def file_text(record: StoredFile, folders: Sequence[str] = ()) -> str:
     lines = [
-        f"📄 <b>{_escape(record.file_name)}</b>",
+        f"📄 <b>{escape_text(record.file_name)}</b>",
         "",
         pick(f"Category: {category_label(record.category)}", f"الفئة: {category_label(record.category)}"),
-        pick(f"Size: {_escape(record.size_human)}", f"الحجم: {_escape(record.size_human)}"),
+        pick(f"Size: {escape_text(record.size_human)}", f"الحجم: {escape_text(record.size_human)}"),
         pick(
-            f"Saved on: {_escape(record.created_human)}",
-            f"تاريخ الحفظ: {_escape(record.created_human)}",
+            f"Saved on: {escape_text(record.created_human)}",
+            f"تاريخ الحفظ: {escape_text(record.created_human)}",
         ),
         pick(
-            f"Folders: {_escape('، '.join(folders)) if folders else '—'}",
-            f"المجلدات: {_escape('، '.join(folders)) if folders else '—'}",
+            f"Folders: {escape_text('، '.join(folders)) if folders else '—'}",
+            f"المجلدات: {escape_text('، '.join(folders)) if folders else '—'}",
         ),
         (
             pick(
-                f"Fingerprint: <code>{_escape(record.hash_short)}</code>",
-                f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>",
+                f"Fingerprint: <code>{escape_text(record.hash_short)}</code>",
+                f"بصمة المحتوى: <code>{escape_text(record.hash_short)}</code>",
             )
             if record.hash_short
             else pick(
@@ -936,8 +931,8 @@ def folders_text(
         for folder in folders:
             star = "⭐" if folder.favorite else "📁"
             lines.append(
-                f"{star} <b>{_escape(folder.name)}</b> — {count_files(folder.count)} "
-                f"· {_escape(human_total(folder.bytes))}"
+                f"{star} <b>{escape_text(folder.name)}</b> — {count_files(folder.count)} "
+                f"· {escape_text(human_total(folder.bytes))}"
             )
     else:
         lines.append(
@@ -961,8 +956,8 @@ def folder_delete_text(folder: Folder) -> str:
             pick("🗑 <b>Delete the folder</b>", "🗑 <b>حذف المجلد</b>"),
             "",
             pick(
-                f"Folder: «{_escape(folder.name)}» — {count_files(folder.count)}",
-                f"المجلد: «{_escape(folder.name)}» — {count_files(folder.count)}",
+                f"Folder: «{escape_text(folder.name)}» — {count_files(folder.count)}",
+                f"المجلد: «{escape_text(folder.name)}» — {count_files(folder.count)}",
             ),
             "",
             pick(
@@ -986,10 +981,10 @@ def folder_text(
     size = folder.bytes or sum(file.size_bytes for file in files)
     lines = [
         pick(
-            f"📁 <b>{_escape(folder.name)}</b> — {count_files(count)} · "
-            f"{_escape(human_total(size))}",
-            f"📁 <b>{_escape(folder.name)}</b> — {count_files(count)} · "
-            f"{_escape(human_total(size))}",
+            f"📁 <b>{escape_text(folder.name)}</b> — {count_files(count)} · "
+            f"{escape_text(human_total(size))}",
+            f"📁 <b>{escape_text(folder.name)}</b> — {count_files(count)} · "
+            f"{escape_text(human_total(size))}",
         ),
         "",
         pick("⭐ In the favourites", "⭐ في المفضلة")
@@ -1024,7 +1019,7 @@ def pick_folder_text(record: StoredFile) -> str:
         [
             pick("📁 <b>Add to a folder</b>", "📁 <b>إضافة إلى مجلد</b>"),
             "",
-            pick(f"File: {_escape(record.file_name)}", f"الملف: {_escape(record.file_name)}"),
+            pick(f"File: {escape_text(record.file_name)}", f"الملف: {escape_text(record.file_name)}"),
             "",
             pick("Pick the folder to link this file to:", "اختر المجلد الذي تريد ربط الملف به:"),
         ]
@@ -1082,10 +1077,10 @@ def invite_text(link: str, label: str, *, join_request: bool = False) -> str:
         [
             pick("✅ <b>New invite link</b>", "✅ <b>رابط دعوة جديد</b>"),
             "",
-            pick(f"Group: {_escape(label)}", f"المجموعة: {_escape(label)}"),
+            pick(f"Group: {escape_text(label)}", f"المجموعة: {escape_text(label)}"),
             hint,
             "",
-            f"<code>{_escape(link)}</code>",
+            f"<code>{escape_text(link)}</code>",
         ]
     )
 
@@ -1096,8 +1091,8 @@ def rename_prompt_text(record: StoredFile) -> str:
             pick("✏️ <b>Rename the file</b>", "✏️ <b>إعادة تسمية الملف</b>"),
             "",
             pick(
-                f"Current name: {_escape(record.file_name)}",
-                f"الاسم الحالي: {_escape(record.file_name)}",
+                f"Current name: {escape_text(record.file_name)}",
+                f"الاسم الحالي: {escape_text(record.file_name)}",
             ),
             "",
             pick("Send the new name:", "أرسل الاسم الجديد كما تريده:"),
@@ -1106,13 +1101,13 @@ def rename_prompt_text(record: StoredFile) -> str:
 
 
 def file_caption(record: StoredFile) -> str:
-    return f"{_escape(record.file_name)} — {_escape(record.size_human)}"
+    return f"{escape_text(record.file_name)} — {escape_text(record.size_human)}"
 
 
 def file_sent_text(record: StoredFile) -> str:
     return pick(
-        f"✅ «{_escape(record.file_name)}» was sent to the chat.",
-        f"✅ تم إرسال «{_escape(record.file_name)}» إلى المحادثة.",
+        f"✅ «{escape_text(record.file_name)}» was sent to the chat.",
+        f"✅ تم إرسال «{escape_text(record.file_name)}» إلى المحادثة.",
     )
 
 
@@ -1121,8 +1116,8 @@ def deletion_text(record: StoredFile) -> str:
         [
             pick("🗑 <b>Delete the file</b>", "🗑 <b>حذف الملف</b>"),
             "",
-            pick(f"Name: {_escape(record.file_name)}", f"الاسم: {_escape(record.file_name)}"),
-            pick(f"Size: {_escape(record.size_human)}", f"الحجم: {_escape(record.size_human)}"),
+            pick(f"Name: {escape_text(record.file_name)}", f"الاسم: {escape_text(record.file_name)}"),
+            pick(f"Size: {escape_text(record.size_human)}", f"الحجم: {escape_text(record.size_human)}"),
             "",
             pick(
                 "Are you sure? This cannot be undone.",

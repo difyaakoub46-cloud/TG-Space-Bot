@@ -9,7 +9,6 @@ the list is always sorted alphabetically and paged.
 
 from __future__ import annotations
 
-import html
 import logging
 
 from aiogram import F, Router
@@ -22,6 +21,7 @@ from src.bot.states import FolderStates
 from src.core.i18n import pick
 from src.db.repository import SupabaseError
 from src.services.container import Services
+from src.utils.formatters import escape_text
 from src.utils.sorting import SortSpec
 
 logger = logging.getLogger(__name__)
@@ -324,9 +324,9 @@ async def folder_delete_confirm_callback(
         _folders_key(user_id),
         notice=(
             pick(
-                f"✅ The folder «{html.escape(name, quote=False)}» was deleted.\n\n"
+                f"✅ The folder «{escape_text(name)}» was deleted.\n\n"
                 "Every file it held stays in the library and in its storage group.",
-                f"✅ حُذف المجلد «{html.escape(name, quote=False)}».\n\n"
+                f"✅ حُذف المجلد «{escape_text(name)}».\n\n"
                 "جميع الملفات التي كانت فيه باقية في المكتبة وفي مجموعات التخزين.",
             )
         ),

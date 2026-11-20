@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import logging
 
 from aiogram import F, Router
@@ -25,7 +24,7 @@ from src.bot.states import RenameStates
 from src.core.i18n import pick
 from src.services.container import Services
 from src.utils.filetypes import parse_category
-from src.utils.formatters import keep_extension
+from src.utils.formatters import escape_text, keep_extension
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +241,8 @@ async def rename_message(
         services,
         {"k": "file", "id": updated.id},
         notice=pick(
-            f"✅ The name was changed to «{html.escape(updated.file_name, quote=False)}».",
-            f"✅ تم تغيير الاسم إلى «{html.escape(updated.file_name, quote=False)}».",
+            f"✅ The name was changed to «{escape_text(updated.file_name)}».",
+            f"✅ تم تغيير الاسم إلى «{escape_text(updated.file_name)}».",
         ),
     )
 

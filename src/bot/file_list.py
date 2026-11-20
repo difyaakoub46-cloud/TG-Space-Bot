@@ -18,7 +18,6 @@ screen the chat happens to be on.
 from __future__ import annotations
 
 import asyncio
-import html
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
@@ -33,7 +32,7 @@ from src.bot.library_views import history_period_label
 from src.core.i18n import pick
 from src.db.models import Folder
 from src.services.files import FileListPage, history_date
-from src.utils.formatters import format_number, truncate_name
+from src.utils.formatters import escape_text, format_number, truncate_name
 from src.utils.sorting import sort_from_key
 
 VIEWS: tuple[str, ...] = ("search", "category")
@@ -63,10 +62,6 @@ _SORT_LABELS: dict[str, tuple[str, str]] = {
     "name_asc": ("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z"),
     "name_desc": ("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A"),
 }
-
-
-def _escape(value: object) -> str:
-    return html.escape(str(value), quote=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -175,17 +170,17 @@ def file_list_text(
 ) -> str:
     """The header of the list: where it comes from, its date, its size and sort."""
     if ctx.view == "category":
-        title = f"<b>{_escape(views.category_label(ctx.value))}</b>"
+        title = f"<b>{escape_text(views.category_label(ctx.value))}</b>"
     elif ctx.value:
         title = pick(
-            f"🔍 <b>Search: «{_escape(ctx.value)}»</b>",
-            f"🔍 <b>البحث عن «{_escape(ctx.value)}»</b>",
+            f"🔍 <b>Search: «{escape_text(ctx.value)}»</b>",
+            f"🔍 <b>البحث عن «{escape_text(ctx.value)}»</b>",
         )
     else:
         title = pick("🔍 <b>Search</b>", "🔍 <b>البحث</b>")
 
     # The date of the period is always the first thing under the title.
-    lines = [title, _escape(history_period_label(page))]
+    lines = [title, escape_text(history_period_label(page))]
 
     summary = f"📄 {views.count_files(page.total)}"
     if ctx.view == "search" and ctx.value:

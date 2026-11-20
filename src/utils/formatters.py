@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 from datetime import datetime, timezone
 
@@ -14,6 +15,15 @@ _UNITS = ("B", "KB", "MB", "GB", "TB")
 # wrapped by Telegram, so every row of the panel has the same height.
 NAME_HEAD = 12
 NAME_TAIL = 8
+
+
+def escape_text(value: object) -> str:
+    """Escape a value for Telegram's HTML parse mode.
+
+    Quotes are left alone on purpose: the text always goes inside a message body,
+    never inside an attribute, and a file name reads better with its quotes.
+    """
+    return html.escape(str(value), quote=False)
 
 
 def truncate_name(

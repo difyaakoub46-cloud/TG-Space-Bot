@@ -7,7 +7,6 @@ growing :mod:`src.bot.views` any further. Every string still goes through
 
 from __future__ import annotations
 
-import html
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -16,16 +15,12 @@ from src.bot.views import category_label
 from src.core.i18n import pick
 from src.db.models import StoredFile
 from src.services.files import local_zone
-from src.utils.formatters import format_number
+from src.utils.formatters import escape_text, format_number
 
 if TYPE_CHECKING:
     from src.services.files import FileListPage
 
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
-
-
-def _escape(value: object) -> str:
-    return html.escape(str(value), quote=False)
 
 
 def history_span_label(span: str) -> str:
@@ -190,15 +185,15 @@ def saved_batch_text(
             f"📄 الملف {index + 1} من {total}",
         ),
         "",
-        f"<b>{_escape(record.file_name)}</b>",
+        f"<b>{escape_text(record.file_name)}</b>",
         pick(
             f"Category: {category_label(record.category)}",
             f"الفئة: {category_label(record.category)}",
         ),
-        pick(f"Size: {_escape(record.size_human)}", f"الحجم: {_escape(record.size_human)}"),
+        pick(f"Size: {escape_text(record.size_human)}", f"الحجم: {escape_text(record.size_human)}"),
         pick(
-            f"Saved on: {_escape(record.created_human)}",
-            f"تاريخ الحفظ: {_escape(record.created_human)}",
+            f"Saved on: {escape_text(record.created_human)}",
+            f"تاريخ الحفظ: {escape_text(record.created_human)}",
         ),
     ]
     if record.id in duplicate_ids:
@@ -211,8 +206,8 @@ def saved_batch_text(
     if record.hash_short:
         lines.append(
             pick(
-                f"Fingerprint: <code>{_escape(record.hash_short)}</code>",
-                f"بصمة المحتوى: <code>{_escape(record.hash_short)}</code>",
+                f"Fingerprint: <code>{escape_text(record.hash_short)}</code>",
+                f"بصمة المحتوى: <code>{escape_text(record.hash_short)}</code>",
             )
         )
 
