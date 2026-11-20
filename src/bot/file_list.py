@@ -334,36 +334,30 @@ def _controls(
 ) -> list[InlineKeyboardButton]:
     """Previous / next page, then the quick jump to the closest older period.
 
-    «Previous» always stays in the row so the layout never shifts; on the first
-    page it is inert, and so is «Next» on the last page of the period.
+    A button is only built when its tap reaches somewhere: the pagers used to
+    stay on screen with an inert callback on the first and the last page, so a
+    tap there did nothing at all.
     """
-    buttons = [
-        InlineKeyboardButton(
-            text=pick("◀️ Previous", "◀️ السابق"),
-            callback_data=(
-                callback_data(ctx, page=page.newer_page)
-                if page.newer_page is not None
-                else FileListCB(action="noop").pack()
-            ),
-        ),
-        InlineKeyboardButton(
-            text=pick("Next ▶️", "التالي ▶️"),
-            callback_data=(
-                callback_data(ctx, page=page.older_page)
-                if page.older_page is not None
-                else FileListCB(action="noop").pack()
-            ),
-        ),
-    ]
-    if page.span != "all":
+    buttons: list[InlineKeyboardButton] = []
+    if page.newer_page is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("◀️ Previous", "◀️ السابق"),
+                callback_data=callback_data(ctx, page=page.newer_page),
+            )
+        )
+    if page.older_page is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=pick("Next ▶️", "التالي ▶️"),
+                callback_data=callback_data(ctx, page=page.older_page),
+            )
+        )
+    if page.span != "all" and page.next_anchor is not None:
         buttons.append(
             InlineKeyboardButton(
                 text=_jump_label(page.span),
-                callback_data=(
-                    callback_data(ctx, page=1, anchor=page.next_anchor)
-                    if page.next_anchor is not None
-                    else FileListCB(action="noop").pack()
-                ),
+                callback_data=callback_data(ctx, page=1, anchor=page.next_anchor),
             )
         )
     return buttons
