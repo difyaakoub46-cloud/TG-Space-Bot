@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 from aiogram.exceptions import TelegramAPIError
 
@@ -165,13 +166,25 @@ async def _storage_checks(services: Services) -> list[StorageChatCheck]:
         return []
 
 
+async def _timed_stats(services: Services) -> tuple[dict[str, Any], float]:
+    """The library totals and how long the database took to produce them."""
+    started = time.perf_counter()
+    stats = await services.files.stats()
+    return stats, (time.perf_counter() - started) * 1000
+
+
 async def statistics_text(services: Services) -> str:
-    """The «Statistics» screen: the counts next to the group holding each category."""
+    """The «Statistics» screen: the counts next to the group holding each category.
+
+    The database latency is measured here, around the read that produced these
+    numbers, instead of on the status screen that only wanted to know the
+    database was up.
+    """
     # The totals and the group check are independent: one wait instead of two.
-    stats, checks = await asyncio.gather(
-        services.files.stats(), _storage_checks(services)
+    (stats, latency_ms), checks = await asyncio.gather(
+        _timed_stats(services), _storage_checks(services)
     )
-    return views.stats_text(stats, checks)
+    return views.stats_text(stats, checks, latency_ms)
 
 
 async def group_permissions_text(services: Services) -> str:
@@ -206,25 +219,24 @@ async def status_text(
     """Build the status screen; the storage check is run when not supplied."""
     settings = services.settings
 
-    # The call itself is what the latency line reports; its numbers belong to
-    # «Statistics», so they are not shown here.
-    started = time.perf_counter()
+    # Only the reachability of the database matters here: asking for one row
+    # proves it answers, where the totals (which «Statistics» shows) would count
+    # the whole library for a screen that never displays them.
     try:
         if checks is None:
-            # The database latency and the group check are independent: one wait
-            # for both, and neither is repeated on the next tap.
+            # The database check and the group check are independent: one wait for
+            # both, and neither is repeated on the next tap.
             _, checks = await asyncio.gather(
-                services.files.stats(), _storage_checks(services)
+                services.files.ping(), _storage_checks(services)
             )
         else:
-            await services.files.stats()
+            await services.files.ping()
         database_error = None
     except (SupabaseError, OSError):
         # The technical text (PostgREST codes, the failing URL) belongs to the
         # logs; the screen only says that the database did not answer.
         logger.error("Status screen: the database call failed", exc_info=True)
         database_error = True
-    latency_ms = (time.perf_counter() - started) * 1000
     checks = list(checks or ())
 
     configured = settings.storage_chats()
@@ -252,13 +264,11 @@ async def status_text(
         "",
         pick("🗄 <b>Database</b> (Supabase)", "🗄 <b>قاعدة البيانات</b> (Supabase)"),
         pick(
-            f"Table: <code>{escape_text(settings.supabase_table)}</code> · "
-            f"Latency: {latency_ms:.0f} ms",
-            f"الجدول: <code>{escape_text(settings.supabase_table)}</code> · "
-            f"زمن الاستجابة: {latency_ms:.0f} م.ث",
+            f"Table: <code>{escape_text(settings.supabase_table)}</code>",
+            f"الجدول: <code>{escape_text(settings.supabase_table)}</code>",
         ),
-        # The file counts and the total size live in «Statistics», so they are not
-        # repeated here: this screen only proves the database answered and how fast.
+        # The counts, the total size and the latency live in «Statistics»; this
+        # screen only proves that the database answered.
     ]
     if database_error:
         lines.append(

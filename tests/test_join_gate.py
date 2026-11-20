@@ -318,7 +318,7 @@ async def test_the_group_id_learned_by_the_storage_service_covers_the_gate(tmp_p
 # --------------------------------------------------------------------------- #
 async def test_the_status_screen_warns_when_the_guard_is_off(tmp_path) -> None:
     class Files:
-        async def stats(self):
+        async def ping(self) -> None:
             return None
 
     def services(settings) -> SimpleNamespace:

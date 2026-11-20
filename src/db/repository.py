@@ -318,6 +318,15 @@ class FileRepository:
             periods.append((anchor, int(row.get("files") or 0)))
         return periods
 
+    async def ping(self) -> None:
+        """Prove the database answers, without reading or counting anything.
+
+        A ``HEAD`` for a single row is the cheapest question PostgREST can be
+        asked; ``count()`` makes it count the whole table, which the status
+        screen has no use for.
+        """
+        await self._request("HEAD", params={"select": "id", "limit": "1"})
+
     async def count(self, *, category: FileCategory | None = None) -> int:
         params: dict[str, str] = {"select": "id", "limit": "1"}
         if category is not None:

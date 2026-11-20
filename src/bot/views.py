@@ -447,12 +447,17 @@ def storage_group_label(check: Any) -> str:
     )
 
 
-def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) -> str:
+def stats_text(
+    stats: Mapping[str, Any],
+    checks: Sequence[Any] | None = None,
+    latency_ms: float | None = None,
+) -> str:
     """The «Statistics» screen: the counts, each next to the group holding it.
 
     The group list used to live in «General status»; it is merged here so one line
     answers both questions — how many files of a category there are, and which
-    group stores them.
+    group stores them. ``latency_ms`` is the time those numbers took to arrive,
+    measured where they are read.
     """
     total = int(stats.get("total", 0))
     total_bytes = int(stats.get("total_bytes", 0))
@@ -476,6 +481,13 @@ def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) ->
             f"الحجم الإجمالي: <b>{escape_text(human_size(total_bytes))}</b>",
         ),
     ]
+    if latency_ms is not None:
+        lines.append(
+            pick(
+                f"⏱ Database latency: {latency_ms:.0f} ms",
+                f"⏱ زمن استجابة القاعدة: {latency_ms:.0f} م.ث",
+            )
+        )
     if categories:
         lines.append("")
         for category, count in categories.items():

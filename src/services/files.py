@@ -796,6 +796,15 @@ class FileStorageServices:
         """The library totals, reused for a moment by the next screen."""
         return await self._cache.get("stats", self._load_stats)
 
+    async def ping(self) -> None:
+        """Check that the database answers, without reading the library.
+
+        The status screen only needs to know the table is reachable: asking for
+        the totals there would count and size the whole library, and its answer
+        was thrown away.
+        """
+        await self._repository.ping()
+
     async def _load_stats(self) -> dict[str, Any]:
         """The whole library summary from one request.
 

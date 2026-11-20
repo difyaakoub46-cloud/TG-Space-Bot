@@ -166,10 +166,10 @@ class FakeServices:
         self.settings = settings
         self.bot = None
         self.pending = SimpleNamespace(total=0)
-        self.files = SimpleNamespace(stats=self._stats)
+        self.files = SimpleNamespace(ping=self._ping)
 
-    async def _stats(self):
-        return {"total": 0, "total_bytes": 0, "categories": {}}
+    async def _ping(self) -> None:
+        return None
 
     def uptime_seconds(self) -> float:
         return 60.0
