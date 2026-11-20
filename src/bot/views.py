@@ -17,7 +17,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from src.core.i18n import Language, language_name, pick
+from src.core.i18n import Language, language_name, pick, plural
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, human_size, human_total
@@ -75,6 +75,21 @@ def fallback_label() -> str:
 
 def _escape(value: Any) -> str:
     return html.escape(str(value), quote=False)
+
+
+# The two nouns every count on a screen is made of, in both languages.
+_FILES = ("file", "files", ("ملف واحد", "ملفان", "ملفات", "ملفاً"))
+_FOLDERS = ("folder", "folders", ("مجلد واحد", "مجلدان", "مجلدات", "مجلداً"))
+
+
+def count_files(count: int) -> str:
+    """``1 file`` / ``2 files``, and their Arabic forms."""
+    return plural(count, *_FILES)
+
+
+def count_folders(count: int) -> str:
+    """``1 folder`` / ``2 folders``, and their Arabic forms."""
+    return plural(count, *_FOLDERS)
 
 
 def sort_summary(sort: SortSpec) -> str:
@@ -352,35 +367,11 @@ def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
     return "\n".join(
         [
             pick("👋 Welcome to TG-Space-Bot", "👋 مرحباً بك في TG-Space-Bot"),
-            "",
             pick(
-                "This bot saves your files into organised Telegram storage groups.",
-                "هذا البوت يحفظ ملفاتك في مجموعات تخزين منظمة تلقائياً.",
-            ),
-            pick(
-                "Send any file now, or move around with the buttons below.",
-                "أرسل أي ملف الآن، أو تنقّل عبر الأزرار أدناه.",
-            ),
-            "",
-            pick(
-                f"🗂 <b>Library total</b>: {format_number(total_files)} file(s) · "
-                f"{_escape(human_total(total_bytes))}",
-                f"🗂 <b>إجمالي المكتبة</b>: {format_number(total_files)} ملف · "
-                f"{_escape(human_total(total_bytes))}",
-            ),
-            "",
-            pick(
-                "📚 Library — browse the files by category",
-                "📚 المكتبة — تصفح الملفات حسب الفئة",
-            ),
-            pick("🔍 Search — find a file by name", "🔍 بحث — البحث بالاسم داخل المكتبة"),
-            pick(
-                "⚙️ Settings — language, groups and help",
-                "⚙️ الإعدادات — اللغة والمجموعات والمساعدة",
-            ),
-            pick(
-                "🩺 General status — bot, database and storage groups",
-                "🩺 الحالة العامة — البوت وقاعدة البيانات ومجموعات التخزين",
+                f"🗂 {count_files(total_files)} · {_escape(human_total(total_bytes))} "
+                "— send a file to save it, or use the buttons below.",
+                f"🗂 {count_files(total_files)} · {_escape(human_total(total_bytes))} "
+                "— أرسل ملفاً لحفظه، أو استخدم الأزرار أدناه.",
             ),
         ]
     )
@@ -391,24 +382,12 @@ def settings_text() -> str:
     return "\n".join(
         [
             pick("⚙️ <b>Settings</b>", "⚙️ <b>الإعدادات</b>"),
-            "",
-            pick(
-                "Everything that configures the bot lives here, away from the "
-                "library screens.",
-                "كل ما يضبط البوت موجود هنا، بعيداً عن شاشات المكتبة.",
-            ),
-            "",
             pick(f"🌐 Language: <b>{current}</b>", f"🌐 اللغة: <b>{current}</b>"),
             pick(
-                "🔗 Join the groups — owner only: a one-time invite, then the bot "
-                "promotes you to admin.",
-                "🔗 الانضمام إلى المجموعات — للمالك فقط: رابط دعوة لاستخدام واحد ثم "
-                "ترقية تلقائية إلى مشرف.",
+                "🔗 Join the groups — owner only",
+                "🔗 الانضمام إلى المجموعات — للمالك فقط",
             ),
-            pick(
-                "❓ Help — commands and how the screens work.",
-                "❓ مساعدة — الأوامر وطريقة عمل الشاشات.",
-            ),
+            pick("❓ Help — commands and screens", "❓ مساعدة — الأوامر والشاشات"),
         ]
     )
 
@@ -444,56 +423,26 @@ def help_text() -> str:
     return "\n".join(
         [
             pick("📖 <b>Help</b>", "📖 <b>مساعدة</b>"),
-            "",
             pick(
-                "• Send any file (document, image, video, audio, archive) and it is "
-                "saved into its own category group.",
-                "• أرسل أي ملف (مستند، صورة، فيديو، صوت، أرشيف) وسيُحفظ في مجموعته "
-                "المناسبة.",
-            ),
-            pick("• /library — browse the library by category.", "• /library لتصفح المكتبة حسب الفئة."),
-            pick("• /search — find a saved file by name.", "• /search للبحث عن ملف محفوظ بالاسم."),
-            pick(
-                "• /stats — the library statistics (also under General status).",
-                "• /stats لعرض الإحصائيات (موجودة أيضاً داخل الحالة العامة).",
+                "• Send any file to save it in its category group.",
+                "• أرسل أي ملف ليُحفظ في مجموعة فئته.",
             ),
             pick(
-                "• /status — the general status and the storage check.",
-                "• /status لعرض الحالة العامة وفحص مجموعات التخزين.",
-            ),
-            pick("• /cancel — cancel whatever is running.", "• /cancel لإلغاء أي عملية جارية."),
-            "",
-            pick(
-                "From a file's page you can send it, delete it, rename it or add it "
-                "to a folder.",
-                "من صفحة أي ملف يمكنك: إرساله، حذفه، إعادة تسميته، أو إضافته إلى مجلد.",
+                "• /library · /search · /stats · /status · /cancel",
+                "• /library · /search · /stats · /status · /cancel",
             ),
             pick(
-                "Folders are organisational labels only; the file stays in the "
-                "Telegram group of its category.",
-                "المجلدات تسميات تنظيمية فقط؛ الملف يبقى في مجموعة تيليغرام الخاصة "
-                "بفئته.",
+                "• A file's page: send, delete, rename, or add to a folder.",
+                "• صفحة الملف: إرسال، حذف، إعادة تسمية، أو إضافة إلى مجلد.",
             ),
             pick(
-                "Inside the library or a folder, «🔃 Sort» orders by size, date or "
-                "name, in both directions.",
-                "داخل المكتبة أو أي مجلد: زر «🔃 فرز / ترتيب» يغيّر الترتيب حسب الحجم "
-                "أو التاريخ أو الاسم، تصاعدياً أو تنازلياً.",
+                "• «🔃 Sort» orders by size, date or name, both ways.",
+                "• «🔃 فرز / ترتيب» يرتّب حسب الحجم أو التاريخ أو الاسم، تصاعدياً أو تنازلياً.",
             ),
-            "",
             pick(
-                "🛟 Emergency — a file whose registration fails is held in the "
-                "emergency group and never enters the library; «🔧 Repair» inside "
-                "the status section registers it and moves it afterwards.",
-                "🛟 الاحتياط — إن تعذّر تسجيل ملف في قاعدة البيانات يُحفظ في مجموعة "
-                "الاحتياط ولا يُنقل إلى المكتبة؛ وزر «🔧 إصلاح» داخل قسم الحالة "
-                "يسجّله ثم ينقله.",
-            ),
-            "",
-            pick(
-                "🌐 The language can be changed at any time from Settings; English "
-                "is the default.",
-                "🌐 يمكن تغيير اللغة في أي وقت من الإعدادات؛ والإنجليزية هي الافتراضية.",
+                "• A file whose registration fails waits in the reserve; «🔧 Repair» "
+                "registers it.",
+                "• الملف الذي يفشل تسجيله يبقى في الاحتياط، و«🔧 إصلاح» يسجّله.",
             ),
         ]
     )
@@ -600,8 +549,8 @@ def categories_text(
         pick("📚 <b>Library</b>", "📚 <b>المكتبة</b>"),
         "",
         pick(
-            f"Total: {format_number(total_files)} file(s) · {_escape(human_total(total_bytes))}",
-            f"الإجمالي: {format_number(total_files)} ملف · {_escape(human_total(total_bytes))}",
+            f"Total: {count_files(total_files)} · {_escape(human_total(total_bytes))}",
+            f"الإجمالي: {count_files(total_files)} · {_escape(human_total(total_bytes))}",
         ),
         "",
         pick("<b>Categories</b>", "<b>الفئات</b>"),
@@ -611,12 +560,8 @@ def categories_text(
     for category in ordered:
         count, size = totals[category]
         lines.append(
-            pick(
-                f"{category_label(category)} — {format_number(count)} file(s) · "
-                f"{_escape(human_total(size))}",
-                f"{category_label(category)} — {format_number(count)} ملف · "
-                f"{_escape(human_total(size))}",
-            )
+            f"{category_label(category)} — {count_files(count)} · "
+            f"{_escape(human_total(size))}"
         )
 
     lines.append("")
@@ -624,10 +569,7 @@ def categories_text(
         lines.append(pick("<b>⭐ Favourite folders</b>", "<b>⭐ المجلدات المفضلة</b>"))
         for folder in favorites:
             lines.append(
-                pick(
-                    f"⭐ {_escape(folder.name)} — {format_number(folder.count)} file(s)",
-                    f"⭐ {_escape(folder.name)} — {format_number(folder.count)} ملف",
-                )
+                f"⭐ {_escape(folder.name)} — {count_files(folder.count)}"
             )
     else:
         lines.append(
@@ -666,10 +608,7 @@ def category_text(
         else (len(files), sum(file.size_bytes for file in files))
     )
     lines = [
-        pick(
-            f"{label} — {format_number(count)} file(s) · {_escape(human_total(size))}",
-            f"{label} — {format_number(count)} ملف · {_escape(human_total(size))}",
-        ),
+        f"{label} — {count_files(count)} · {_escape(human_total(size))}",
         "",
     ]
     if not files:
@@ -997,12 +936,8 @@ def folders_text(
         for folder in folders:
             star = "⭐" if folder.favorite else "📁"
             lines.append(
-                pick(
-                    f"{star} <b>{_escape(folder.name)}</b> — {format_number(folder.count)} "
-                    f"file(s) · {_escape(human_total(folder.bytes))}",
-                    f"{star} <b>{_escape(folder.name)}</b> — {format_number(folder.count)} "
-                    f"ملف · {_escape(human_total(folder.bytes))}",
-                )
+                f"{star} <b>{_escape(folder.name)}</b> — {count_files(folder.count)} "
+                f"· {_escape(human_total(folder.bytes))}"
             )
     else:
         lines.append(
@@ -1026,8 +961,8 @@ def folder_delete_text(folder: Folder) -> str:
             pick("🗑 <b>Delete the folder</b>", "🗑 <b>حذف المجلد</b>"),
             "",
             pick(
-                f"Folder: «{_escape(folder.name)}» — {format_number(folder.count)} file(s)",
-                f"المجلد: «{_escape(folder.name)}» — {format_number(folder.count)} ملف",
+                f"Folder: «{_escape(folder.name)}» — {count_files(folder.count)}",
+                f"المجلد: «{_escape(folder.name)}» — {count_files(folder.count)}",
             ),
             "",
             pick(
@@ -1051,9 +986,9 @@ def folder_text(
     size = folder.bytes or sum(file.size_bytes for file in files)
     lines = [
         pick(
-            f"📁 <b>{_escape(folder.name)}</b> — {format_number(count)} file(s) · "
+            f"📁 <b>{_escape(folder.name)}</b> — {count_files(count)} · "
             f"{_escape(human_total(size))}",
-            f"📁 <b>{_escape(folder.name)}</b> — {format_number(count)} ملف · "
+            f"📁 <b>{_escape(folder.name)}</b> — {count_files(count)} · "
             f"{_escape(human_total(size))}",
         ),
         "",

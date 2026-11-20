@@ -57,9 +57,9 @@ async def test_the_list_shows_eight_files_and_the_date_on_top() -> None:
         SimpleNamespace(files=library), screen(f="day")
     )
 
-    assert "file(s)" in text
+    assert "files" in text
     assert "📅 Today: 2026-11-18" in text  # the date is the first line under it
-    assert "20 file(s)" in text
+    assert "20 files" in text
     assert "Page 1 of 3" in text
     file_buttons = buttons(markup, "file:view:")
     assert len(file_buttons) == FILES_PER_PAGE == 8
@@ -214,7 +214,7 @@ async def test_search_passes_its_query_and_the_category_passes_its_name() -> Non
         SimpleNamespace(files=library), screen("search", "photo")
     )
     assert "Search: «photo»" in search_text
-    assert "1 file(s)" in search_text and "1 folder(s)" in search_text
+    assert "1 file" in search_text and "1 folder" in search_text
     assert len(buttons(search_kb, "file:view:")) == 1
     assert repository.calls[-1]["query"] == "photo"
     assert repository.calls[-1]["category"] is None

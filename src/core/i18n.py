@@ -57,6 +57,30 @@ def pick(english: str, arabic: str) -> str:
     return arabic if _current.get() is Language.ar else english
 
 
+def plural(
+    count: int,
+    one: str,
+    many: str,
+    arabic: tuple[str, str, str, str],
+) -> str:
+    """A count and its noun, in the active language.
+
+    English switches at two (``1 file`` / ``2 files``); Arabic keeps its dual and
+    its own ranges, so both rules live here once instead of at every call site.
+    ``arabic`` is written as ``(one, two, three to ten, eleven and more)``.
+    """
+    if _current.get() is Language.ar:
+        one_form, two_form, many_form, over_ten = arabic
+        if count == 1:
+            return one_form
+        if count == 2:
+            return two_form
+        if count <= 0 or count >= 11:
+            return f"{count:,} {over_ten}"
+        return f"{count:,} {many_form}"
+    return f"{count:,} {one if count == 1 else many}"
+
+
 def language_name(language: Language) -> str:
     """The name of a language, always written in that language."""
     return "العربية" if language is Language.ar else "English"
@@ -69,6 +93,7 @@ __all__ = [
     "language_name",
     "parse_language",
     "pick",
+    "plural",
     "reset_language",
     "set_language",
 ]

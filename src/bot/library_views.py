@@ -99,16 +99,8 @@ def saved_screen_settings_text(show: bool = True) -> str:
         [
             "",
             pick(
-                f"📨 Saved-file screen: <b>{state}</b>",
-                f"📨 شاشة «تم حفظ الملف»: <b>{state}</b>",
-            ),
-            pick(
-                "When it is on, every upload ends with the saved card, and an album "
-                "is walked file by file with «Next ▶». When it is off, files are "
-                "stored silently and no card appears.",
-                "عند التفعيل تنتهي كل عملية رفع ببطاقة الحفظ، ويمكن التنقل بين ملفات "
-                "الألبوم بزرّي «التالي ▶» و«السابق ◀». وعند التعطيل تُحفظ الملفات "
-                "بصمت دون إظهار أي بطاقة.",
+                f"📨 Saved-file screen: <b>{state}</b> — an album is walked file by file.",
+                f"📨 شاشة «تم حفظ الملف»: <b>{state}</b> — يمكن التنقل بين ملفات الألبوم.",
             ),
         ]
     )
@@ -147,21 +139,8 @@ def keep_sent_settings_text(keep: bool = False) -> str:
         [
             "",
             pick(
-                f"🗂 Keep the opened files: <b>{state}</b>",
-                f"🗂 الإبقاء على الملفات المفتوحة: <b>{state}</b>",
-            ),
-            pick(
-                "When it is on, a file you open with «📤 Send» stays in the chat even "
-                "after «↩️ Back», through the library, until the main menu removes "
-                "everything.",
-                "عند التفعيل يبقى الملف الذي تفتحه بزر «📤 إرسال» في المحادثة حتى بعد "
-                "«↩️ الرجوع»، عبر المكتبة، إلى أن يمسح زر «القائمة الرئيسية» كل شيء.",
-            ),
-            pick(
-                "When it is off, pressing «↩️ Back» on a file removes its preview "
-                "from the chat immediately; the main menu still clears everything.",
-                "عند التعطيل يمسح زر «↩️ الرجوع» معاينة الملف من المحادثة فوراً، ويبقى "
-                "زر «القائمة الرئيسية» يمسح كل شيء.",
+                f"🗂 Keep the opened files: <b>{state}</b> — «↩️ Back» leaves the file in the chat.",
+                f"🗂 الإبقاء على الملفات المفتوحة: <b>{state}</b> — «↩️ الرجوع» يترك الملف في المحادثة.",
             ),
         ]
     )

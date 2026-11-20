@@ -60,7 +60,7 @@ def test_summary_reports_every_right_enabled() -> None:
     text = permissions_text(
         [make_check(-1001), make_check(-1002, categories=(IMAGES,))]
     )
-    assert "✅ every right is enabled in all 2 group(s)" in text
+    assert "✅ every right is enabled in all 2 groups" in text
 
 
 def test_summary_reports_partial_rights() -> None:
@@ -70,7 +70,7 @@ def test_summary_reports_partial_rights() -> None:
             make_check(-1002, categories=(IMAGES,), missing=("can_pin_messages",)),
         ]
     )
-    assert "⚠️ partial — complete in 1 of 2 group(s)" in text
+    assert "⚠️ partial — complete in 1 of 2" in text
 
 
 def test_summary_reports_no_rights() -> None:
@@ -80,13 +80,13 @@ def test_summary_reports_no_rights() -> None:
             make_check(-1002, categories=(IMAGES,), is_admin=False),
         ]
     )
-    assert "⛔ enabled in none of the 2 group(s)" in text
+    assert "⛔ enabled in none of the 2 groups" in text
 
 
 # --------------------------------------------------------------------------- #
 # Missing rights and what each one breaks
 # --------------------------------------------------------------------------- #
-def test_missing_rights_are_named_with_their_effect() -> None:
+def test_missing_rights_fit_on_the_group_line() -> None:
     text = permissions_text(
         [
             make_check(
@@ -100,14 +100,15 @@ def test_missing_rights_are_named_with_their_effect() -> None:
             )
         ]
     )
+    # One line per group: the missing rights, with no repeated explanation under it.
     assert (
-        "missing: Invite users via link · Ban users · Delete messages · Pin messages"
-        in text
+        "⚠️ 📄 Documents — <code>-1001</code> — missing: Invite users via link · "
+        "Ban users · Delete messages · Pin messages" in text
     )
-    assert "no join request arrives" in text
-    assert "cannot be removed" in text
-    assert "copy stays in the library" in text
-    assert "automatic promotion of the owner fails" in text
+    assert "no join request arrives" not in text
+    assert "cannot be removed" not in text
+    assert "copy stays in the library" not in text
+    assert "automatic promotion of the owner fails" not in text
 
 
 # --------------------------------------------------------------------------- #
@@ -178,4 +179,4 @@ async def test_status_screen_no_longer_lists_the_groups(tmp_path) -> None:
     services = FakeServices(make_settings(tmp_path))
     text = await status_text(services, [make_check(-1001)])
     assert "-1001" not in text
-    assert "✅ every right is enabled in all 1 group(s)" in text
+    assert "✅ every right is enabled in all 1 group" in text

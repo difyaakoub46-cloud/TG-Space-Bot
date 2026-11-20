@@ -187,15 +187,9 @@ def file_list_text(
     # The date of the period is always the first thing under the title.
     lines = [title, _escape(history_period_label(page))]
 
-    summary = pick(
-        f"📄 {format_number(page.total)} file(s)",
-        f"📄 {format_number(page.total)} ملف",
-    )
+    summary = f"📄 {views.count_files(page.total)}"
     if ctx.view == "search" and ctx.value:
-        summary += pick(
-            f" · 📁 {format_number(folder_total)} folder(s)",
-            f" · 📁 {format_number(folder_total)} مجلد",
-        )
+        summary += f" · 📁 {views.count_folders(folder_total)}"
     if page.pages > 1:
         summary += pick(
             f" · 📄 Page {page.page} of {page.pages}",

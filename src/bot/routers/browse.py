@@ -212,7 +212,7 @@ async def rename_message(
         await message.answer(
             pick(
                 "⚠️ Send a name between 1 and 120 characters.",
-                "⚠️ أرسل اسماً بين حرف واحد و١٢٠ حرفاً.",
+                "⚠️ أرسل اسماً بين 1 و120 حرفاً.",
             )
         )
         return

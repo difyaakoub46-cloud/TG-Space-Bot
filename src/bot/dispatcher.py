@@ -23,11 +23,18 @@ from src.bot.routers import (
     status,
     upload,
 )
+from src.core.i18n import pick
 from src.services.container import Services
 
 logger = logging.getLogger(__name__)
 
-ERROR_TEXT = "⚠️ تعذّر إكمال العملية حالياً. حاول مرة أخرى بعد قليل."
+
+def error_text() -> str:
+    """The one message a failed handler shows, in the active language."""
+    return pick(
+        "⚠️ Could not finish that just now. Please try again in a moment.",
+        "⚠️ تعذّر إكمال العملية حالياً. حاول مرة أخرى بعد قليل.",
+    )
 
 
 async def on_error(event: ErrorEvent) -> None:
@@ -47,12 +54,12 @@ async def on_error(event: ErrorEvent) -> None:
             # The query was already acknowledged (see ``AckMiddleware``), so the
             # alert is delivered as a message instead of a popup.
             try:
-                await callback.answer(ERROR_TEXT, show_alert=True)
+                await callback.answer(error_text(), show_alert=True)
             except TelegramAPIError:
                 if callback.message is not None:
-                    await callback.message.answer(ERROR_TEXT)
+                    await callback.message.answer(error_text())
         elif isinstance(message, Message):
-            await message.answer(ERROR_TEXT)
+            await message.answer(error_text())
     except Exception:  # noqa: BLE001 - never fail inside the error handler
         logger.debug("Could not notify the user about the failure", exc_info=True)
 

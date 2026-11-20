@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from aiogram.exceptions import TelegramAPIError
 
 from src.bot import views
-from src.core.i18n import pick
+from src.core.i18n import pick, plural
 from src.db.repository import SupabaseError
 from src.services.container import Services
 from src.services.storage import REQUIRED_RIGHTS, StorageChatCheck
@@ -45,16 +45,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _plural_ar(count: int, one: str, two: str, many: str) -> str:
-    if count == 1:
-        return one
-    if count == 2:
-        return two
-    if 3 <= count <= 10:
-        return f"{count} {many}"
-    return f"{count} {one}"
-
-
 def _uptime(seconds: float) -> str:
     seconds = max(0, int(seconds))
     days, rest = divmod(seconds, 86_400)
@@ -63,22 +53,20 @@ def _uptime(seconds: float) -> str:
     parts: list[str] = []
     if days:
         parts.append(
-            pick(
-                f"{days} day{'s' if days != 1 else ''}",
-                _plural_ar(days, "يوم", "يومان", "أيام"),
-            )
+            plural(days, "day", "days", ("يوم واحد", "يومان", "أيام", "يوماً"))
         )
     if hours:
         parts.append(
-            pick(
-                f"{hours} hour{'s' if hours != 1 else ''}",
-                _plural_ar(hours, "ساعة", "ساعتان", "ساعات"),
+            plural(
+                hours, "hour", "hours", ("ساعة واحدة", "ساعتان", "ساعات", "ساعة")
             )
         )
     parts.append(
-        pick(
-            f"{minutes} minute{'s' if minutes != 1 else ''}",
-            _plural_ar(minutes, "دقيقة", "دقيقتان", "دقائق"),
+        plural(
+            minutes,
+            "minute",
+            "minutes",
+            ("دقيقة واحدة", "دقيقتان", "دقائق", "دقيقة"),
         )
     )
     return pick(" and ".join(parts), " و".join(parts))
@@ -119,24 +107,25 @@ def _permissions_summary(checks: Sequence[StorageChatCheck]) -> str:
     total = len(readable)
     full = sum(1 for check in readable if _state(check) == "ok")
     off = sum(1 for check in readable if _state(check) == "none")
+    groups = plural(total, "group", "groups", ("مجموعة", "مجموعتان", "مجموعات", "مجموعة"))
     if full == total:
         return pick(
-            f"🛡 Permissions: ✅ every right is enabled in all {total} group(s)",
+            f"🛡 Permissions: ✅ every right is enabled in all {groups}",
             f"🛡 الصلاحيات: ✅ كل الحقوق مفعّلة في المجموعات ({total})",
         )
     if full == 0 and off == total:
         return pick(
-            f"🛡 Permissions: ⛔ enabled in none of the {total} group(s)",
+            f"🛡 Permissions: ⛔ enabled in none of the {groups}",
             f"🛡 الصلاحيات: ⛔ غير مفعّلة في أي مجموعة من {total}",
         )
     return pick(
-        f"🛡 Permissions: ⚠️ partial — complete in {full} of {total} group(s)",
-        f"🛡 الصلاحيات: ⚠️ جزئية — مكتملة في {full} من {total} مجموعة",
+        f"🛡 Permissions: ⚠️ partial — complete in {full} of {total}",
+        f"🛡 الصلاحيات: ⚠️ جزئية — مكتملة في {full} من {total}",
     )
 
 
 def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
-    """The «Group permissions» screen: every group, every missing right."""
+    """The «Group permissions» screen: a summary line, then one line per group."""
     lines = [
         pick("🛡 <b>Group permissions</b>", "🛡 <b>الصلاحيات للمجموعات</b>"),
         "",
@@ -156,78 +145,24 @@ def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
     for check in readable:
         state = _state(check)
         label = _check_labels(check)
+        label = f"{label} — <code>{check.chat_id}</code>"
         if state == "ok":
-            lines.append(f"✅ {label} — <code>{check.chat_id}</code>")
+            lines.append(f"✅ {label}")
+        elif state == "none":
+            lines.append(f"⛔ {label} — " + pick("not an administrator", "ليس مشرفاً"))
+        else:
             lines.append(
-                "   "
-                + pick(
-                    "all the required rights are enabled",
-                    "كل الحقوق المطلوبة مفعّلة",
-                )
-            )
-            continue
-        if state == "none":
-            lines.append(f"⛔ {label} — <code>{check.chat_id}</code>")
-            lines.append(
-                "   "
-                + pick(
-                    "the bot is not an administrator here, so no right applies",
-                    "البوت ليس مشرفاً هنا، فلا ينطبق أي حق",
-                )
-            )
-            continue
-
-        lines.append(f"⚠️ {label} — <code>{check.chat_id}</code>")
-        lines.append(
-            "   " + pick("missing: ", "ناقص: ") + right_labels(check.missing_rights)
-        )
-        if "can_invite_users" in check.missing_rights:
-            lines.append(
-                "   "
-                + pick(
-                    "⛔ no join request arrives, so links and approvals stop working",
-                    "⛔ لا يصل أي طلب انضمام، فتتعطّل الروابط والموافقات",
-                )
-            )
-        if "can_restrict_members" in check.missing_rights:
-            lines.append(
-                "   "
-                + pick(
-                    "⚠️ a non-allowed account that gets in cannot be removed",
-                    "⚠️ لا يمكن إخراج حساب غير مسموح إذا دخل",
-                )
-            )
-        if "can_delete_messages" in check.missing_rights:
-            lines.append(
-                "   "
-                + pick(
-                    "⚠️ a copy stays in the library when its registration fails",
-                    "⚠️ تبقى نسخة في المكتبة إذا فشل تسجيل الملف",
-                )
-            )
-        promotion_rights = {
-            "can_promote_members",
-            "can_change_info",
-            "can_pin_messages",
-            "can_manage_video_chats",
-        }
-        if promotion_rights.intersection(check.missing_rights):
-            lines.append(
-                "   "
-                + pick(
-                    "⚠️ the automatic promotion of the owner fails",
-                    "⚠️ تفشل الترقية التلقائية للمالك",
-                )
+                f"⚠️ {label} — "
+                + pick("missing: ", "ناقص: ")
+                + right_labels(check.missing_rights)
             )
 
     lines.append("")
     lines.append(
         pick(
-            "The seven rights come from the administrator screen of each group. "
-            "Enable all of them for the bot; the check runs again every time you "
-            "open this section.",
-            "الحقوق السبعة هي نفسها في شاشة المشرفين لكل مجموعة. فعّلها كلها للبوت؛ "
-            "ويتكرّر الفحص في كل مرة تفتح فيها هذا القسم.",
+            "Enable the seven rights for the bot in each group's administrator "
+            "screen; the check runs again on every visit.",
+            "فعّل الحقوق السبعة للبوت في شاشة مشرفي كل مجموعة؛ ويتكرّر الفحص في كل زيارة.",
         )
     )
     return "\n".join(lines)
@@ -370,8 +305,8 @@ async def status_text(
                 f"⛔ {format_number(len(broken))}",
             ),
             pick(
-                f"🛟 Reserve: {format_number(services.pending.total)} pending file(s)",
-                f"🛟 الاحتياط: {format_number(services.pending.total)} ملفاً معلّقاً",
+                f"🛟 Reserve: {views.count_files(services.pending.total)} pending",
+                f"🛟 الاحتياط: {views.count_files(services.pending.total)} في الانتظار",
             ),
             # Only the overall state here; the per-right detail has its own section,
             # and the per-group ids live in «Statistics».

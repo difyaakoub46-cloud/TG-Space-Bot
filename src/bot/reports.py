@@ -12,7 +12,7 @@ import logging
 from collections.abc import Sequence
 
 from src.bot.status import right_labels
-from src.bot.views import category_label, fallback_label
+from src.bot.views import category_label, count_files, fallback_label
 from src.core.i18n import pick
 from src.services.files import RepairReport
 from src.services.storage import StorageChatCheck
@@ -116,7 +116,7 @@ def storage_check_text(
         lines.append(
             pick(
                 f"⚠️ Missing in {format_number(len(rights_problems))} of "
-                f"{format_number(len(checks))} group(s):",
+                f"{format_number(len(checks))}:",
                 f"⚠️ ناقصة في {format_number(len(rights_problems))} من "
                 f"{format_number(len(checks))} مجموعة:",
             )
@@ -232,9 +232,9 @@ def repair_report_text(report: RepairReport, remaining: int) -> str:
         lines.append("")
         lines.append(
             pick(
-                f"⚠️ {format_number(len(report.errors))} file(s) could not be handled; "
+                f"⚠️ {count_files(len(report.errors))} could not be handled; "
                 "the technical details are in the logs.",
-                f"⚠️ تعذّر التعامل مع {format_number(len(report.errors))} ملفاً؛ "
+                f"⚠️ تعذّر التعامل مع {count_files(len(report.errors))}؛ "
                 "التفاصيل التقنية في السجلات.",
             )
         )

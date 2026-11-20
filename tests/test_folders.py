@@ -200,7 +200,7 @@ async def test_the_folders_screen_reads_every_folder_and_its_totals_in_one_reque
     assert dict(request.url.params)["user_id"] == f"eq.{USER}"
 
     assert "Books" in text and "Photos" in text
-    assert "3 file(s)" in text and "1 file(s)" in text
+    assert "3 files" in text and "1 file" in text
     assert len(folder_buttons(markup)) == 2
 
 
@@ -223,7 +223,7 @@ async def test_a_database_without_the_view_still_lists_the_folders() -> None:
         "folder_totals",
     ]
     assert "Books" in text and "Photos" in text
-    assert "3 file(s)" in text and "1 file(s)" in text
+    assert "3 files" in text and "1 file" in text
     assert len(folder_buttons(markup)) == 2
 
 

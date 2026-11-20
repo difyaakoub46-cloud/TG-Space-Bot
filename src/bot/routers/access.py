@@ -36,7 +36,7 @@ from aiogram.types import (
 from src.bot import navigation, views
 from src.bot.keyboards import JoinCB, MenuCB
 from src.core.config import ConfigurationError
-from src.core.i18n import pick
+from src.core.i18n import pick, plural
 from src.services.container import Services
 from src.services.storage import StorageService
 from src.utils.filetypes import parse_category
@@ -313,17 +313,25 @@ async def join_link_callback(
             "\n\n🛡 الرابط يُنشئ <b>طلب انضمام</b> فقط: يوافق البوت على الحساب "
             "المسموح ويرفض أي حساب آخر، ويُبطل الرابط من أول استخدام.",
         )
-        notice += pick(
-            f"\n⏳ It also expires after {ttl_minutes} minute(s).",
-            f"\n⏳ كما تنتهي صلاحيته بعد {ttl_minutes} دقيقة.",
-        )
+        notice += "\n⏳ " + pick(
+            "It also expires after ", "كما تنتهي صلاحيته بعد "
+        ) + plural(
+            ttl_minutes,
+            "minute",
+            "minutes",
+            ("دقيقة واحدة", "دقيقتين", "دقائق", "دقيقة"),
+        ) + "."
     else:
         # Without the guard the link joins directly, but it still expires: not
         # saying so made the owner think a leaked link stayed valid forever.
-        notice += pick(
-            f"\n\n⏳ The link expires after {ttl_minutes} minute(s).",
-            f"\n\n⏳ ينتهي الرابط بعد {ttl_minutes} دقيقة.",
-        )
+        notice += "\n\n⏳ " + pick(
+            "The link expires after ", "ينتهي الرابط بعد "
+        ) + plural(
+            ttl_minutes,
+            "minute",
+            "minutes",
+            ("دقيقة واحدة", "دقيقتين", "دقائق", "دقيقة"),
+        ) + "."
     if old_id is not None:
         notice += (
             pick(
