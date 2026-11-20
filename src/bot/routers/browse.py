@@ -125,8 +125,10 @@ async def file_view_callback(
     if record is None:
         await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
         return
+    # The row is already read: hand it over instead of letting the screen fetch
+    # the same file a second time.
     await navigation.navigate_callback(
-        callback, state, bot, services, {"k": "file", "id": record.id}
+        callback, state, bot, services, {"k": "file", "id": record.id}, record=record
     )
 
 
@@ -167,6 +169,7 @@ async def file_send_callback(
         {"k": "file", "id": record.id},
         notice=views.file_sent_text(record),
         push=False,
+        record=record,
     )
 
 
@@ -191,6 +194,7 @@ async def file_rename_callback(
         {"k": "file", "id": record.id},
         notice=views.rename_prompt_text(record),
         push=False,
+        record=record,
     )
 
 
@@ -264,6 +268,7 @@ async def file_folder_callback(
             "u": int(callback.from_user.id),
             "file": record.id,
         },
+        record=record,
     )
 
 
@@ -285,6 +290,7 @@ async def file_delete_callback(
         notice=views.deletion_text(record),
         markup=delete_confirm_kb(record.id),
         push=False,
+        record=record,
     )
 
 
