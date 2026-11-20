@@ -242,14 +242,20 @@ async def status_text(
     broken = [check for check in checks if not check.reachable]
     allowed = settings.allowed_users()
 
+    # Both branches of ``pick`` are built, so a value written into each of them is
+    # produced twice unless it is computed once here first.
+    identity = await _bot_identity(services.bot)
+    uptime = _uptime(services.uptime_seconds())
+    updated = _now()
+
     lines = [
         pick("🩺 <b>General status</b>", "🩺 <b>الحالة العامة</b>"),
-        pick(f"Last update: {_now()}", f"آخر تحديث: {_now()}"),
+        pick(f"Last update: {updated}", f"آخر تحديث: {updated}"),
         "",
         pick("🤖 <b>Bot</b>", "🤖 <b>البوت</b>"),
-        pick(f"Account: {await _bot_identity(services.bot)}", f"الحساب: {await _bot_identity(services.bot)}"),
+        pick(f"Account: {identity}", f"الحساب: {identity}"),
         pick("Mode: long polling", "وضع التشغيل: Long polling (استقبال مباشر)"),
-        pick(f"Uptime: {_uptime(services.uptime_seconds())}", f"مدة التشغيل: {_uptime(services.uptime_seconds())}"),
+        pick(f"Uptime: {uptime}", f"مدة التشغيل: {uptime}"),
         pick(
             f"Owner: <code>{settings.owner_id or 'not set'}</code>",
             f"المالك: <code>{settings.owner_id or 'غير محدد'}</code>",
