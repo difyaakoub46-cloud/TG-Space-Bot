@@ -33,7 +33,7 @@ from src.core.i18n import pick
 from src.db.models import Folder
 from src.services.files import FileListPage, history_date
 from src.utils.formatters import escape_text, format_number, truncate_name
-from src.utils.sorting import sort_from_key
+from src.utils.sorting import SORT_CHOICES, sort_from_key
 
 VIEWS: tuple[str, ...] = ("search", "category")
 
@@ -53,16 +53,6 @@ _FILTER_LABELS: dict[str, tuple[str, str]] = {
 # screen key it was typed on.
 _MAX_CALLBACK_VALUE = 16
 _MAX_LABEL = 48
-
-_SORT_LABELS: dict[str, tuple[str, str]] = {
-    "newest": ("🕐 Newest first", "🕐 الأحدث أولاً"),
-    "oldest": ("🕐 Oldest first", "🕐 الأقدم أولاً"),
-    "size_asc": ("📦 Smallest first", "📦 الأصغر أولاً"),
-    "size_desc": ("📦 Largest first", "📦 الأكبر أولاً"),
-    "name_asc": ("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z"),
-    "name_desc": ("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A"),
-}
-
 
 # --------------------------------------------------------------------------- #
 # Context: where the list came from, and what it is showing
@@ -235,29 +225,6 @@ def file_list_text(
             )
         )
     return "\n".join(lines)
-
-
-def sort_menu_text(ctx: FileListContext) -> str:
-    """The ordering panel: the current choice and what a tap does."""
-    return "\n".join(
-        [
-            pick("🔃 <b>Sort the files</b>", "🔃 <b>فرز وترتيب الملفات</b>"),
-            "",
-            pick(
-                f"Current ordering: <b>{views.sort_summary(sort_from_key(ctx.sort))}</b>",
-                f"الترتيب الحالي: <b>{views.sort_summary(sort_from_key(ctx.sort))}</b>",
-            ),
-            "",
-            pick(
-                "Pick an ordering; the list is refreshed in place. The ordering "
-                "covers every file of the list, not the page, and returns you to "
-                "the first page because the page numbers change.",
-                "اختر ترتيباً؛ تتحدّث القائمة في مكانها. الفرز يشمل كل ملفات "
-                "القائمة لا الصفحة المعروضة، ويعود بك إلى الصفحة الأولى لأن "
-                "ترقيم الصفحات يتغيّر.",
-            ),
-        ]
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -488,12 +455,11 @@ def period_picker_kb(
 def sort_menu_kb(ctx: FileListContext) -> InlineKeyboardMarkup:
     """Every ordering as one button, the active one marked with ✅."""
     builder = InlineKeyboardBuilder()
-    for key in _SORT_LABELS:
-        label = pick(*_SORT_LABELS[key])
-        active = key == ctx.sort
+    for choice in SORT_CHOICES:
+        active = choice.key == ctx.sort
         builder.button(
-            text=f"{'✅ ' if active else ''}{label}",
-            callback_data=callback_data(ctx, "sorted", page=1, sort=key),
+            text=f"{'✅ ' if active else ''}{pick(*choice.labels)}",
+            callback_data=callback_data(ctx, "sorted", page=1, sort=choice.key),
         )
     builder.adjust(2)
     builder.row(
@@ -560,5 +526,4 @@ __all__ = [
     "period_picker_text",
     "screen",
     "sort_menu_kb",
-    "sort_menu_text",
 ]

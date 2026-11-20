@@ -20,7 +20,7 @@ from src.core.i18n import Language, language_name, pick, plural
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import escape_text, format_number, human_size, human_total
-from src.utils.sorting import SortDirection, SortField, SortSpec
+from src.utils.sorting import SortDirection, SortField, SortSpec, sort_choice
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.services.pending import PendingFile
@@ -88,27 +88,12 @@ def count_folders(count: int) -> str:
 
 
 def sort_summary(sort: SortSpec) -> str:
-    """Human description of the current ordering."""
-    return {
-        (SortField.size, SortDirection.asc): pick(
-            "📦 Size — smallest first", "📦 الحجم — الأصغر أولاً"
-        ),
-        (SortField.size, SortDirection.desc): pick(
-            "📦 Size — largest first", "📦 الحجم — الأكبر أولاً"
-        ),
-        (SortField.date, SortDirection.asc): pick(
-            "🕐 Date — oldest first", "🕐 التاريخ — الأقدم أولاً"
-        ),
-        (SortField.date, SortDirection.desc): pick(
-            "🕐 Date — newest first", "🕐 التاريخ — الأحدث أولاً"
-        ),
-        (SortField.name, SortDirection.asc): pick(
-            "🔤 Name — A→Z / أ→ي", "🔤 الاسم — أ→ي / A→Z"
-        ),
-        (SortField.name, SortDirection.desc): pick(
-            "🔤 Name — Z→A / ي→أ", "🔤 الاسم — ي→أ / Z→A"
-        ),
-    }.get((sort.field, sort.direction), "")
+    """Human description of the current ordering.
+
+    It is the button's own label, so the panel and the list header name an
+    ordering exactly the way the button that chose it does.
+    """
+    return pick(*sort_choice(sort).labels)
 
 
 def sort_short(sort: SortSpec) -> str:
@@ -123,7 +108,11 @@ def sort_short(sort: SortSpec) -> str:
 
 
 def sort_menu_text(sort: SortSpec) -> str:
-    """The sorting panel: current choice plus what each button does."""
+    """The sorting panel: the current choice, then what every button does.
+
+    Both panels — a folder's and the shared file list's — show this text; the
+    ordering they pass is the only difference between them.
+    """
     return "\n".join(
         [
             pick("🔃 <b>Sort the files</b>", "🔃 <b>فرز وترتيب الملفات</b>"),
@@ -134,14 +123,12 @@ def sort_menu_text(sort: SortSpec) -> str:
             ),
             "",
             pick(
-                "Pick an ordering; the list is refreshed in place.",
-                "اختر ترتيباً؛ تتحدّث القائمة في مكانها دون إعادة فتحها.",
-            ),
-            pick(
-                "The ordering covers every file of the category, not the page, and "
-                "returns you to the first page because the page numbers change.",
-                "الفرز يشمل كل ملفات الفئة لا الصفحة المعروضة، ويعود بك إلى "
-                "الصفحة الأولى لأن ترقيم الصفحات يتغيّر مع كل ترتيب.",
+                "Pick an ordering; the list is refreshed in place. The ordering "
+                "covers every file of the list, not the page, and returns you to "
+                "the first page because the page numbers change.",
+                "اختر ترتيباً؛ تتحدّث القائمة في مكانها. الفرز يشمل كل ملفات "
+                "القائمة لا الصفحة المعروضة، ويعود بك إلى الصفحة الأولى لأن "
+                "ترقيم الصفحات يتغيّر.",
             ),
         ]
     )

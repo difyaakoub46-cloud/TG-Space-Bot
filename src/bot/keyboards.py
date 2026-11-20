@@ -30,7 +30,7 @@ from src.core.i18n import Language, pick
 from src.db.models import Folder, StoredFile
 from src.utils.filetypes import FileCategory
 from src.utils.formatters import format_number, truncate_name
-from src.utils.sorting import SortDirection, SortField, SortSpec
+from src.utils.sorting import SORT_CHOICES, SortSpec
 
 _MAX_BUTTON_TEXT = 55
 
@@ -422,20 +422,14 @@ def _sort_button(sort: SortSpec) -> InlineKeyboardButton:
 def sort_menu_kb(sort: SortSpec) -> InlineKeyboardMarkup:
     """Every ordering as one button, the active one marked with ✅."""
     builder = InlineKeyboardBuilder()
-    options = (
-        (SortField.size, SortDirection.asc, pick("📦 Smallest first", "📦 الأصغر أولاً")),
-        (SortField.size, SortDirection.desc, pick("📦 Largest first", "📦 الأكبر أولاً")),
-        (SortField.date, SortDirection.asc, pick("🕐 Oldest first", "🕐 الأقدم أولاً")),
-        (SortField.date, SortDirection.desc, pick("🕐 Newest first", "🕐 الأحدث أولاً")),
-        (SortField.name, SortDirection.asc, pick("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z")),
-        (SortField.name, SortDirection.desc, pick("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A")),
-    )
-    for field, direction, label in options:
-        active = sort.field is field and sort.direction is direction
+    for choice in SORT_CHOICES:
+        active = choice.spec == sort
         builder.button(
-            text=f"{'✅ ' if active else ''}{label}",
+            text=f"{'✅ ' if active else ''}{pick(*choice.labels)}",
             callback_data=SortCB(
-                action="set", field=field.value, direction=direction.value
+                action="set",
+                field=choice.spec.field.value,
+                direction=choice.spec.direction.value,
             ).pack(),
         )
     builder.adjust(2)

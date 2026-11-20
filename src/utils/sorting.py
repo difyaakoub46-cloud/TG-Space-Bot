@@ -74,23 +74,59 @@ class SortSpec:
         return {"s": self.field.value, "d": self.direction.value}
 
 
-# The six orderings of the shared file list, as they travel in callback data.
-SORT_KEYS: tuple[str, ...] = (
-    "newest",
-    "oldest",
-    "size_asc",
-    "size_desc",
-    "name_asc",
-    "name_desc",
+@dataclass(frozen=True, slots=True)
+class SortChoice:
+    """One of the six orderings: its key, its rule and its button label.
+
+    The label is bilingual here and rendered with ``pick`` in the bot layer, the
+    same way a category or a period is named, so the six orderings are written
+    once and every panel shows the same six names.
+    """
+
+    key: str
+    spec: SortSpec
+    labels: tuple[str, str]
+
+
+# The freshest files on top is the first entry, and the default of a new list.
+SORT_CHOICES: tuple[SortChoice, ...] = (
+    SortChoice(
+        "newest",
+        SortSpec(SortField.date, SortDirection.desc),
+        ("🕐 Newest first", "🕐 الأحدث أولاً"),
+    ),
+    SortChoice(
+        "oldest",
+        SortSpec(SortField.date, SortDirection.asc),
+        ("🕐 Oldest first", "🕐 الأقدم أولاً"),
+    ),
+    SortChoice(
+        "size_asc",
+        SortSpec(SortField.size, SortDirection.asc),
+        ("📦 Smallest first", "📦 الأصغر أولاً"),
+    ),
+    SortChoice(
+        "size_desc",
+        SortSpec(SortField.size, SortDirection.desc),
+        ("📦 Largest first", "📦 الأكبر أولاً"),
+    ),
+    SortChoice(
+        "name_asc",
+        SortSpec(SortField.name, SortDirection.asc),
+        ("🔤 A→Z / أ→ي", "🔤 أ→ي / A→Z"),
+    ),
+    SortChoice(
+        "name_desc",
+        SortSpec(SortField.name, SortDirection.desc),
+        ("🔤 Z→A / ي→أ", "🔤 ي→أ / Z→A"),
+    ),
 )
 
+# The keys as they travel in callback data, in the order the panels list them.
+SORT_KEYS: tuple[str, ...] = tuple(choice.key for choice in SORT_CHOICES)
+
 _SORT_SPECS: dict[str, SortSpec] = {
-    "newest": SortSpec(SortField.date, SortDirection.desc),
-    "oldest": SortSpec(SortField.date, SortDirection.asc),
-    "size_asc": SortSpec(SortField.size, SortDirection.asc),
-    "size_desc": SortSpec(SortField.size, SortDirection.desc),
-    "name_asc": SortSpec(SortField.name, SortDirection.asc),
-    "name_desc": SortSpec(SortField.name, SortDirection.desc),
+    choice.key: choice.spec for choice in SORT_CHOICES
 }
 
 
@@ -103,6 +139,14 @@ def normalise_sort(value: Any) -> str:
 def sort_from_key(key: Any) -> SortSpec:
     """The ordering a short sort key stands for (newest first by default)."""
     return _SORT_SPECS[normalise_sort(key)]
+
+
+def sort_choice(spec: SortSpec) -> SortChoice:
+    """The choice an ordering stands for (newest first when it is unknown)."""
+    for choice in SORT_CHOICES:
+        if choice.spec == spec:
+            return choice
+    return SORT_CHOICES[0]
 
 
 def sort_key(spec: SortSpec) -> str:
@@ -135,13 +179,16 @@ def database_order(spec: SortSpec) -> str:
 
 
 __all__ = [
+    "SORT_CHOICES",
     "SORT_KEYS",
+    "SortChoice",
     "SortDirection",
     "SortField",
     "SortSpec",
     "database_order",
     "name_key",
     "normalise_sort",
+    "sort_choice",
     "sort_files",
     "sort_from_key",
     "sort_key",

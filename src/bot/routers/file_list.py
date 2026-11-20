@@ -17,6 +17,7 @@ from src.bot import file_list, navigation, views
 from src.bot.file_list import FileListCB, FileListContext
 from src.services.container import Services
 from src.services.files import history_date
+from src.utils.sorting import sort_from_key
 
 router = Router(name="file_list")
 
@@ -88,7 +89,7 @@ async def file_list_callback(
             bot,
             services,
             ctx.to_screen(base),
-            notice=file_list.sort_menu_text(ctx),
+            notice=views.sort_menu_text(sort_from_key(ctx.sort)),
             markup=file_list.sort_menu_kb(ctx),
             push=False,
         )
