@@ -17,24 +17,29 @@ import html
 
 from aiogram import F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import Filter
+from aiogram.filters import Command, Filter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
-from src.bot import views
-from src.bot.keyboards import main_menu_kb
+from src.bot import file_list, navigation, views
+from src.bot.keyboards import LINKS_TEXTS, MenuCB, main_menu_kb
 from src.core.i18n import pick
 from src.services.container import Services
 from src.services.files import LinkSaveReport
 from src.utils.formatters import escape_text
-from src.utils.links import extract_links
+from src.utils.links import TELEGRAM, extract_links
 
 router = Router(name="links")
 
-# A text message that carries at least one link. It is a filter, not a check
-# inside the handler: a handler that answers every text message would swallow
-# the screens that expect one (a search query, a folder name).
+
 class HasLinks(Filter):
+    """A text message that carries at least one link.
+
+    It is a filter, not a check inside the handler: a handler that answered every
+    text message would swallow the screens that expect one (a search query, a
+    folder name).
+    """
+
     async def __call__(self, message: Message) -> bool:
         return bool(extract_links(message.text or ""))
 
@@ -85,6 +90,45 @@ def saved_text(report: LinkSaveReport) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# The links screen
+# --------------------------------------------------------------------------- #
+@router.message(Command("links"))
+@router.message(F.text.in_(LINKS_TEXTS))
+async def cmd_links(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    """Open the links list, on the Telegram section."""
+    user_id = int(message.from_user.id) if message.from_user else 0
+    await views.reset_flow(state)
+    await views.remember(state, message.message_id)
+    await navigation.navigate_message(
+        message,
+        state,
+        bot,
+        services,
+        file_list.new_screen("links", TELEGRAM, user_id),
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "links"))
+async def menu_links_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """«🔗 Links» from the main menu: Telegram Links first, as requested."""
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        file_list.new_screen("links", TELEGRAM, int(callback.from_user.id)),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Saving the links of a message
+# --------------------------------------------------------------------------- #
 @router.message(F.chat.type == ChatType.PRIVATE, HasLinks())
 async def save_links_message(
     message: Message, services: Services, state: FSMContext

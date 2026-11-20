@@ -49,6 +49,15 @@ def record(
     )
 
 
+def _has_type(file: StoredFile, link_type: str | None) -> bool:
+    """The fake's ``WHERE link_type``: files only unless a section is asked for."""
+    if link_type is None:
+        return True
+    if link_type == "none":
+        return file.link_type is None
+    return file.link_type == link_type
+
+
 class ListRepository:
     """In-memory PostgREST: the view filter, the window, the order and the slice."""
 
@@ -70,6 +79,7 @@ class ListRepository:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        link_type: str | None = "none",
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         limit: int = 10,
@@ -82,6 +92,7 @@ class ListRepository:
             for file in self.files
             if (not needle or needle in file.file_name.casefold())
             and (category is None or file.category is category)
+            and _has_type(file, link_type)
             and (created_after is None or file.created_at >= created_after)
             and (created_before is None or file.created_at < created_before)
         ]
@@ -96,6 +107,7 @@ class ListRepository:
             {
                 "query": query,
                 "category": category,
+                "link_type": link_type,
                 "limit": limit,
                 "offset": offset,
                 "order": order,
@@ -108,6 +120,7 @@ class ListRepository:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        link_type: str | None = "none",
         limit: int = 200,
         offset: int = 0,
     ) -> list[datetime]:
@@ -118,6 +131,7 @@ class ListRepository:
             for file in self.files
             if (not needle or needle in file.file_name.casefold())
             and (category is None or file.category is category)
+            and _has_type(file, link_type)
         ]
         rows.sort(key=lambda file: file.created_at, reverse=True)
         return [file.created_at for file in rows[offset : offset + limit]]

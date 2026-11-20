@@ -23,7 +23,7 @@ from src.services.cache import TTLCache
 from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
-from src.utils.links import Link
+from src.utils.links import LINK_TYPES, TELEGRAM, Link
 from src.utils.sorting import (
     SortSpec,
     database_order,
@@ -50,8 +50,9 @@ FILES_PER_PAGE = 8
 CACHE_TTL_SECONDS = 30.0
 HISTORY_SPANS: tuple[str, ...] = ("day", "week", "month", "year", "all")
 
-# The two ways into the shared file list: a typed query or a library category.
-LIST_VIEWS: tuple[str, ...] = ("search", "category")
+# The three ways into the shared list: a typed query, a library category, or one
+# of the two sections of the links screen.
+LIST_VIEWS: tuple[str, ...] = ("search", "category", "links")
 
 # The fallback of the period picker (when the ``files_periods`` function has not
 # been installed yet) reads the newest dates in pages of this size, and never
@@ -719,14 +720,21 @@ class FileStorageServices:
         page = max(1, page)
 
         # The view's own WHERE clause, shared by the page and the period jump.
+        link_type = "none"
         query = value if view == "search" and value else None
         category = parse_category(value) if view == "category" and value else None
+        if view == "links":
+            # The links section is the view's filter; an unknown value (an older
+            # screen) opens the default section instead of every link at once.
+            value = value if value in LINK_TYPES else TELEGRAM
+            link_type = value
         order = database_order(sort_from_key(sort))
 
         async def fetch(target: int) -> tuple[list[StoredFile], int]:
             return await self._repository.search(
                 query=query,
                 category=category,
+                link_type=link_type,
                 created_after=start,
                 created_before=end,
                 limit=per_page,
@@ -755,7 +763,9 @@ class FileStorageServices:
         else:
             (files, total), next_anchor = await asyncio.gather(
                 fetch_page(),
-                self._nearest_older_day(start, query=query, category=category),
+                self._nearest_older_day(
+                    start, query=query, category=category, link_type=link_type
+                ),
             )
         pages = max(1, -(-total // per_page))
 
@@ -780,6 +790,7 @@ class FileStorageServices:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        link_type: str = "none",
     ) -> date | None:
         """The day of the newest file stored before ``moment``.
 
@@ -790,6 +801,7 @@ class FileStorageServices:
         files, _total = await self._repository.search(
             query=query,
             category=category,
+            link_type=link_type,
             created_before=moment,
             limit=1,
             order="created_at.desc",
@@ -822,6 +834,18 @@ class FileStorageServices:
         if span == "all":
             return []
 
+        if view == "links":
+            # The grouping function knows the file categories, not the links yet:
+            # the periods are folded here with the section's own filter instead of
+            # offering dates that only hold files of the other section.
+            return await self._folded_period_counts(
+                None,
+                None,
+                span,
+                limit,
+                link_type=value if value in LINK_TYPES else TELEGRAM,
+            )
+
         query = value if view == "search" and value else None
         category = parse_category(value) if view == "category" and value else None
 
@@ -848,13 +872,18 @@ class FileStorageServices:
         category: FileCategory | None,
         span: str,
         limit: int,
+        link_type: str = "none",
     ) -> list[tuple[date, int]]:
         """Periods and their counts, folded from the newest ``created_at`` values."""
         seen: dict[tuple[int, ...], list] = {}
         offset = 0
         while len(seen) < limit and offset < _DATES_SCAN:
             dates = await self._repository.created_dates(
-                query=query, category=category, limit=_DATES_BATCH, offset=offset
+                query=query,
+                category=category,
+                link_type=link_type,
+                limit=_DATES_BATCH,
+                offset=offset,
             )
             if not dates:
                 break

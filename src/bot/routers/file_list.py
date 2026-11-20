@@ -95,7 +95,11 @@ async def file_list_callback(
         )
         return
 
-    if data.action == "sorted":
+    if data.action == "section":
+        # The two sections are the same list under another filter: the period and
+        # the ordering stay, the page starts again.
+        ctx = replace(ctx, value=data.value, page=1)
+    elif data.action == "sorted":
         # A new ordering renumbers every page, so the list starts again from one.
         ctx = replace(ctx, page=1)
     elif data.action == "clear":

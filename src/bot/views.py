@@ -82,6 +82,13 @@ def links_group_label() -> str:
     return pick("🔗 Links", "🔗 روابط")
 
 
+def links_section_label(link_type: str | None) -> str:
+    """One of the two sections of the links screen."""
+    if link_type == "telegram":
+        return pick("📱 Telegram Links", "📱 روابط تيليغرام")
+    return pick("🌐 Global Links", "🌐 روابط خارجية")
+
+
 # The two nouns every count on a screen is made of, in both languages.
 _FILES = ("file", "files", ("ملف واحد", "ملفان", "ملفات", "ملفاً"))
 _FOLDERS = ("folder", "folders", ("مجلد واحد", "مجلدان", "مجلدات", "مجلداً"))
@@ -95,6 +102,11 @@ def count_files(count: int) -> str:
 def count_folders(count: int) -> str:
     """``1 folder`` / ``2 folders``, and their Arabic forms."""
     return plural(count, *_FOLDERS)
+
+
+def count_links(count: int) -> str:
+    """``1 link`` / ``2 links``, and their Arabic forms."""
+    return plural(count, "link", "links", ("رابط واحد", "رابطان", "روابط", "رابطاً"))
 
 
 def sort_summary(sort: SortSpec) -> str:

@@ -50,6 +50,10 @@ def settings_label() -> str:
     return pick("⚙️ Settings", "⚙️ الإعدادات")
 
 
+def links_label() -> str:
+    return views.links_label()
+
+
 def status_label() -> str:
     return pick("🩺 General status", "🩺 الحالة العامة")
 
@@ -117,6 +121,7 @@ def repair_label() -> str:
 # A typed button may arrive in either language, whatever the current setting is.
 LIBRARY_TEXTS = frozenset({"📚 Library", "📚 المكتبة"})
 SEARCH_TEXTS = frozenset({"🔍 Search", "🔍 بحث"})
+LINKS_TEXTS = frozenset({"🔗 Links", "🔗 الروابط"})
 SETTINGS_TEXTS = frozenset({"⚙️ Settings", "⚙️ الإعدادات"})
 STATUS_TEXTS = frozenset({"🩺 General status", "🩺 الحالة العامة"})
 HELP_TEXTS = frozenset({"❓ Help", "❓ مساعدة"})
@@ -210,11 +215,16 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
-            text=search_label(), callback_data=MenuCB(action="search").pack()
+            text=links_label(), callback_data=MenuCB(action="links").pack()
         ),
         InlineKeyboardButton(
-            text=settings_label(), callback_data=MenuCB(action="settings").pack()
+            text=search_label(), callback_data=MenuCB(action="search").pack()
         ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=settings_label(), callback_data=MenuCB(action="settings").pack()
+        )
     )
     builder.row(
         InlineKeyboardButton(

@@ -18,6 +18,7 @@ screen the chat happens to be on.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
@@ -33,9 +34,10 @@ from src.core.i18n import pick
 from src.db.models import Folder
 from src.services.files import FileListPage, history_date
 from src.utils.formatters import escape_text, format_number, truncate_name
+from src.utils.links import LINK_TYPES
 from src.utils.sorting import SORT_CHOICES, sort_from_key
 
-VIEWS: tuple[str, ...] = ("search", "category")
+VIEWS: tuple[str, ...] = ("search", "category", "links")
 
 # The five filters in one row: «All time» first, then the growing periods.
 _FILTERS: tuple[str, ...] = ("all", "day", "week", "month", "year")
@@ -161,6 +163,8 @@ def file_list_text(
     """The header of the list: where it comes from, its date, its size and sort."""
     if ctx.view == "category":
         title = f"<b>{escape_text(views.category_label(ctx.value))}</b>"
+    elif ctx.view == "links":
+        title = f"<b>{views.links_section_label(ctx.value)}</b>"
     elif ctx.value:
         title = pick(
             f"🔍 <b>Search: «{escape_text(ctx.value)}»</b>",
@@ -172,7 +176,10 @@ def file_list_text(
     # The date of the period is always the first thing under the title.
     lines = [title, escape_text(history_period_label(page))]
 
-    summary = f"📄 {views.count_files(page.total)}"
+    if ctx.view == "links":
+        summary = f"🔗 {views.count_links(page.total)}"
+    else:
+        summary = f"📄 {views.count_files(page.total)}"
     if ctx.view == "search" and ctx.value:
         summary += f" · 📁 {views.count_folders(folder_total)}"
     if page.pages > 1:
@@ -199,6 +206,10 @@ def file_list_text(
             )
         elif ctx.view == "search":
             lines.append(pick("There are no uploads yet.", "لا توجد ملفات بعد."))
+        elif ctx.view == "links":
+            lines.append(
+                pick("No links in this period.", "لا توجد روابط في هذه الفترة.")
+            )
         else:
             lines.append(
                 pick("No files in this period.", "لا توجد ملفات في هذه الفترة.")
@@ -209,6 +220,15 @@ def file_list_text(
             pick(
                 "The matching folders are under the file buttons.",
                 "المجلدات المطابقة أسفل أزرار الملفات.",
+            )
+        )
+
+    if ctx.view == "links":
+        lines.append("")
+        lines.append(
+            pick(
+                "Send any link to save it here.",
+                "أرسل أي رابط لحفظه هنا.",
             )
         )
 
@@ -241,6 +261,48 @@ def _file_label(file) -> str:
         f"📄 {truncate_name(file.file_name)} - {file.size_human} - "
         f"{file.created_at:%H:%M}"
     )
+
+
+def _link_name(url: str) -> str:
+    """The readable part of a link: no scheme, no «www.», cut like a file name."""
+    name = re.sub(r"^(?:https?://|tg://)", "", url.strip())
+    if name.lower().startswith("www."):
+        name = name[4:]
+    if len(name) > _MAX_LABEL:
+        name = f"{name[: _MAX_LABEL - 1]}…"
+    return name or url
+
+
+def _link_label(file) -> str:
+    """One link button: its type, its address and the time it was saved.
+
+    A link has no size, so its section takes the place the size holds on a file
+    button, and the whole button opens the link itself.
+    """
+    mark = "📱" if file.link_type == "telegram" else "🌐"
+    return f"{mark} {_link_name(file.link_url or file.file_name)} - {file.created_at:%H:%M}"
+
+
+def _section_buttons(ctx: FileListContext) -> list[InlineKeyboardButton]:
+    """The two sections of the links screen, the one on screen marked ✅."""
+    return [
+        InlineKeyboardButton(
+            text=(
+                f"{'✅ ' if ctx.value == link_type else ''}"
+                f"{views.links_section_label(link_type)}"
+            ),
+            callback_data=FileListCB(
+                action="section",
+                view="links",
+                value=link_type,
+                period=ctx.period,
+                sort=ctx.sort,
+                page=1,
+                anchor=(ctx.anchor or history_date()).isoformat(),
+            ).pack(),
+        )
+        for link_type in LINK_TYPES
+    ]
 
 
 def _folder_label(folder: Folder) -> str:
@@ -327,10 +389,17 @@ def file_list_kb(
     """Filters, up to eight files, the page controls, sorting and the menu row."""
     builder = InlineKeyboardBuilder()
 
-    # The five period filters share one row on top of the list.
+    # The five period filters share one row on top of the list; the links screen
+    # keeps them and puts its two sections right under them.
     builder.row(*_filter_buttons(ctx, page))
+    if ctx.view == "links":
+        builder.row(*_section_buttons(ctx))
 
     for file in page.files:
+        if ctx.view == "links" and file.link_url:
+            # A tap opens the link itself; there is no card to open for a link.
+            builder.row(InlineKeyboardButton(text=_link_label(file), url=file.link_url))
+            continue
         builder.row(
             InlineKeyboardButton(
                 text=_file_label(file),
