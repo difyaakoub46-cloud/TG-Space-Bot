@@ -148,15 +148,22 @@ def test_permissions_keyboard_only_rechecks_and_goes_back() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The group ids moved from «General status» to «Statistics»
+# The counts stay in «Statistics», the groups and their ids in «Permissions»
 # --------------------------------------------------------------------------- #
-def test_statistics_puts_each_count_next_to_its_group() -> None:
+def test_statistics_lists_counts_without_any_group() -> None:
     stats = {"total": 1, "total_bytes": 10, "categories": {DOCUMENTS: 0, IMAGES: 1}}
-    text = stats_text(
-        stats, [make_check(-1001), make_check(-1002, categories=(IMAGES,))]
-    )
-    assert "✅ 📄 Documents: 0 — <code>-1001</code>" in text
-    assert "✅ 🖼 Images: 1 — <code>-1002</code>" in text
+    text = stats_text(stats)
+    assert "📄 Documents: 0" in text
+    assert "🖼 Images: 1" in text
+    # No group id, no reachability mark, no failure reason: that is the other screen.
+    assert "<code>" not in text
+    assert "✅" not in text
+    assert "⛔" not in text
+
+
+def test_permissions_names_each_group_with_its_id() -> None:
+    text = permissions_text([make_check(-1001)])
+    assert "✅ 📄 Documents — <code>-1001</code>" in text
 
 
 class FakeServices:

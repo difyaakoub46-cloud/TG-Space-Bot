@@ -447,27 +447,16 @@ def storage_group_label(check: Any) -> str:
     )
 
 
-def stats_text(
-    stats: Mapping[str, Any],
-    checks: Sequence[Any] | None = None,
-    latency_ms: float | None = None,
-) -> str:
-    """The «Statistics» screen: the counts, each next to the group holding it.
+def stats_text(stats: Mapping[str, Any], latency_ms: float | None = None) -> str:
+    """The «Statistics» screen: the totals, then one line per category.
 
-    The group list used to live in «General status»; it is merged here so one line
-    answers both questions — how many files of a category there are, and which
-    group stores them. ``latency_ms`` is the time those numbers took to arrive,
-    measured where they are read.
+    The storage groups keep to their own screen: this one answers «how many» and
+    «how large» only, and never asks Telegram anything. ``latency_ms`` is the time
+    those numbers took to arrive, measured where they are read.
     """
     total = int(stats.get("total", 0))
     total_bytes = int(stats.get("total_bytes", 0))
     categories = stats.get("categories") or {}
-    checks = list(checks or ())
-
-    by_category: dict[FileCategory, Any] = {}
-    for check in checks:
-        for category in getattr(check, "categories", ()) or ():
-            by_category[category] = check
 
     lines = [
         pick("📊 <b>Library statistics</b>", "📊 <b>إحصائيات المكتبة</b>"),
@@ -491,42 +480,7 @@ def stats_text(
     if categories:
         lines.append("")
         for category, count in categories.items():
-            parsed: FileCategory | None
-            try:
-                parsed = (
-                    category
-                    if isinstance(category, FileCategory)
-                    else FileCategory(str(category))
-                )
-            except ValueError:
-                parsed = None
-            check = by_category.get(parsed) if parsed is not None else None
-            line = f"{category_label(category)}: {format_number(int(count))}"
-            if check is None:
-                lines.append(line)
-                continue
-            lines.append(
-                f"{'✅' if check.reachable else '⛔'} {line} "
-                f"— <code>{check.chat_id}</code>"
-            )
-
-    # Groups that hold no category of their own (the emergency group) still
-    # belong here: their id was part of the same list.
-    extras = [check for check in checks if not getattr(check, "categories", ())]
-    if extras:
-        lines.append("")
-        for check in extras:
-            lines.append(
-                f"{'✅' if check.reachable else '⛔'} {storage_group_label(check)} "
-                f"— <code>{check.chat_id}</code>"
-            )
-
-    for check in checks:
-        if check.reachable or not check.reason:
-            continue
-        lines.append(
-            f"   ⚠️ {storage_group_label(check)}: {escape_text(check.reason[:160])}"
-        )
+            lines.append(f"{category_label(category)}: {format_number(int(count))}")
     return "\n".join(lines)
 
 

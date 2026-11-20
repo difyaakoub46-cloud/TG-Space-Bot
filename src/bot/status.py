@@ -174,17 +174,14 @@ async def _timed_stats(services: Services) -> tuple[dict[str, Any], float]:
 
 
 async def statistics_text(services: Services) -> str:
-    """The «Statistics» screen: the counts next to the group holding each category.
+    """The «Statistics» screen: the library totals and the count of each category.
 
-    The database latency is measured here, around the read that produced these
-    numbers, instead of on the status screen that only wanted to know the
-    database was up.
+    Nothing here reaches Telegram: the storage groups have their own screen, so
+    opening the statistics never waits for the group checks. The database latency
+    is measured around the read that produced these numbers.
     """
-    # The totals and the group check are independent: one wait instead of two.
-    (stats, latency_ms), checks = await asyncio.gather(
-        _timed_stats(services), _storage_checks(services)
-    )
-    return views.stats_text(stats, checks, latency_ms)
+    stats, latency_ms = await _timed_stats(services)
+    return views.stats_text(stats, latency_ms)
 
 
 async def group_permissions_text(services: Services) -> str:
@@ -302,8 +299,8 @@ async def status_text(
                 f"🛟 Reserve: {views.count_files(services.pending.total)} pending",
                 f"🛟 الاحتياط: {views.count_files(services.pending.total)} في الانتظار",
             ),
-            # Only the overall state here; the per-right detail has its own section,
-            # and the per-group ids live in «Statistics».
+            # Only the overall state here; the per-right detail and the group ids
+            # have their own screen.
             _permissions_summary(checks),
         ]
     )
@@ -321,9 +318,9 @@ async def status_text(
                 "",
                 pick(
                     "⚠️ Add the bot as an admin in the groups marked ⛔ in "
-                    "«📊 Statistics», or fix their ids in Render.",
+                    "«🛡 Group permissions», or fix their ids in Render.",
                     "⚠️ أضف البوت مشرفاً في المجموعات المعلّمة بـ⛔ داخل "
-                    "«📊 الإحصائيات» أو صحّح معرّفها في Render.",
+                    "«🛡 الصلاحيات للمجموعات» أو صحّح معرّفها في Render.",
                 ),
             ]
         )
