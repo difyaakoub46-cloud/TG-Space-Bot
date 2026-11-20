@@ -81,17 +81,6 @@ def _state(check: StorageChatCheck) -> str:
     return "partial" if check.missing_rights else "ok"
 
 
-def _check_labels(check: StorageChatCheck) -> str:
-    if check.is_fallback:
-        return views.fallback_label()
-    if not check.categories:
-        return "—"
-    return "، ".join(
-        views.category_label(category)
-        for category in sorted(check.categories, key=lambda item: item.value)
-    )
-
-
 def _permissions_summary(checks: Sequence[StorageChatCheck]) -> str:
     readable = [check for check in checks if check.reachable]
     if not readable:
@@ -139,7 +128,7 @@ def permissions_text(checks: Sequence[StorageChatCheck]) -> str:
 
     for check in readable:
         state = _state(check)
-        label = _check_labels(check)
+        label = views.storage_group_label(check)
         label = f"{label} — <code>{check.chat_id}</code>"
         if state == "ok":
             lines.append(f"✅ {label}")

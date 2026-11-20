@@ -11,7 +11,11 @@ import logging
 from collections.abc import Sequence
 
 from src.bot.status import right_labels
-from src.bot.views import category_label, count_files, fallback_label
+from src.bot.views import (
+    category_label,
+    count_files,
+    storage_group_label,
+)
 from src.core.i18n import pick
 from src.services.files import RepairReport
 from src.services.storage import StorageChatCheck
@@ -21,16 +25,6 @@ from src.utils.formatters import escape_text, format_number
 _MAX_REASON = 200
 
 logger = logging.getLogger(__name__)
-
-
-def _labels(check: StorageChatCheck) -> str:
-    """The group's name: the reserve, or the categories it stores."""
-    if check.is_fallback:
-        return fallback_label()
-    return "، ".join(
-        category_label(category)
-        for category in sorted(check.categories, key=lambda item: item.value)
-    ) or "—"
 
 
 def storage_check_text(
@@ -79,7 +73,7 @@ def storage_check_text(
             pick("⛔ <b>Unreachable groups</b>", "⛔ <b>مجموعات غير قابلة للوصول</b>")
         )
         for check in broken:
-            lines.append(f"• {_labels(check)} — <code>{check.chat_id}</code>")
+            lines.append(f"• {storage_group_label(check)} — <code>{check.chat_id}</code>")
             if check.reason:
                 lines.append(
                     pick(
@@ -122,7 +116,10 @@ def storage_check_text(
                 if check.is_admin is False
                 else right_labels(check.missing_rights)
             )
-            lines.append(f"• {_labels(check)} — <code>{check.chat_id}</code>: {state}")
+            lines.append(
+                f"• {storage_group_label(check)} — "
+                f"<code>{check.chat_id}</code>: {state}"
+            )
         lines.append(
             pick(
                 "Every right: «🩺 General status» → «🛡 Group permissions».",

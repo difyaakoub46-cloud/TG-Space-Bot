@@ -443,8 +443,12 @@ def help_text() -> str:
     )
 
 
-def _storage_check_label(check: Any) -> str:
-    """The name of a storage group: its categories, or the emergency group."""
+def storage_group_label(check: Any) -> str:
+    """The name of a storage group: its categories, or the emergency group.
+
+    The permissions screen, the statistics and the startup report all list groups,
+    and they name them the same way: the label is built once, here.
+    """
     if getattr(check, "is_fallback", False):
         return fallback_label()
     categories = getattr(check, "categories", ()) or ()
@@ -514,7 +518,7 @@ def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) ->
         lines.append("")
         for check in extras:
             lines.append(
-                f"{'✅' if check.reachable else '⛔'} {_storage_check_label(check)} "
+                f"{'✅' if check.reachable else '⛔'} {storage_group_label(check)} "
                 f"— <code>{check.chat_id}</code>"
             )
 
@@ -522,7 +526,7 @@ def stats_text(stats: Mapping[str, Any], checks: Sequence[Any] | None = None) ->
         if check.reachable or not check.reason:
             continue
         lines.append(
-            f"   ⚠️ {_storage_check_label(check)}: {escape_text(check.reason[:160])}"
+            f"   ⚠️ {storage_group_label(check)}: {escape_text(check.reason[:160])}"
         )
     return "\n".join(lines)
 
