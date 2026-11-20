@@ -262,7 +262,7 @@ async def test_the_sort_panel_offers_the_six_orderings() -> None:
 
 
 async def test_the_typing_state_is_only_on_the_search_list() -> None:
-    class State:
+    class FakeState:
         def __init__(self) -> None:
             self.current = None
 
@@ -272,7 +272,7 @@ async def test_the_typing_state_is_only_on_the_search_list() -> None:
         async def set_state(self, value) -> None:
             self.current = value.state if value is not None else None
 
-    state = State()
+    state = FakeState()
     await navigation._sync_typing(state, screen("search", ""))  # noqa: SLF001
     assert state.current == SearchStates.waiting_query.state
 
