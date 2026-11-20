@@ -48,6 +48,7 @@ from src.bot.keyboards import (
 from src.bot.states import SearchStates
 from src.bot.status import group_permissions_text, statistics_text, status_text
 from src.core.i18n import get_language, pick
+from src.db.models import StoredFile
 from src.services.container import Services
 from src.services.files import FILES_PER_PAGE
 from src.utils.sorting import SortSpec
@@ -119,9 +120,15 @@ def _page(screen: dict[str, object]) -> int:
 
 
 async def build(
-    services: Services, screen: dict[str, object] | None
+    services: Services,
+    screen: dict[str, object] | None,
+    record: StoredFile | None = None,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Rebuild the text and the keyboard of a screen from its key."""
+    """Rebuild the text and the keyboard of a screen from its key.
+
+    ``record`` is the file the caller already read for its own check: passing it
+    saves the second read of the same row that every file action used to make.
+    """
     screen = screen or MAIN
     kind = screen.get("k")
 
@@ -146,7 +153,7 @@ async def build(
         return await file_list.screen(services, screen)
 
     if kind == "file":
-        record = await services.files.get(str(screen.get("id") or ""))
+        record = record or await services.files.get(str(screen.get("id") or ""))
         if record is not None:
             folders = await services.files.file_folders(record.id)
             return views.file_text(record, folders), file_actions_kb(record.id)
@@ -194,7 +201,7 @@ async def build(
             )
 
     if kind == "pick_folder":
-        record = await services.files.get(str(screen.get("file") or ""))
+        record = record or await services.files.get(str(screen.get("file") or ""))
         if record is not None:
             folders = await services.files.folders(int(screen.get("u") or 0))
             return views.pick_folder_text(record), pick_folder_kb(folders)
@@ -304,9 +311,25 @@ async def _render(
     screen: dict[str, object],
     notice: str | None,
     markup: InlineKeyboardMarkup | None,
+    record: StoredFile | None = None,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    text, keyboard = await build(services, screen)
-    return notice or text, markup or keyboard
+    """The text and the keyboard to draw, notice included.
+
+    A notice is an extra line above the screen it belongs to, never a replacement
+    for it: rendering ``notice or text`` used to erase the whole screen, so
+    confirming a deletion lost the file's own details and flipping a setting hid
+    every explanation on the settings panel.
+
+    A screen that brings its own keyboard (the deletion confirmation, the sorting
+    panel, the period picker) is a panel of its own: there the notice *is* its
+    text, because that keyboard has no meaning under the screen underneath.
+    """
+    text, keyboard = await build(services, screen, record)
+    if notice and markup is None:
+        text = f"{notice}\n\n{text}"
+    elif notice:
+        text = notice
+    return text, markup or keyboard
 
 
 async def _sync_typing(state: FSMContext, screen: dict[str, object]) -> None:
@@ -337,10 +360,11 @@ async def navigate_message(
     notice: str | None = None,
     markup: InlineKeyboardMarkup | None = None,
     push: bool = True,
+    record: StoredFile | None = None,
 ) -> None:
     if push:
         await _push_current(state)
-    text, keyboard = await _render(services, screen, notice, markup)
+    text, keyboard = await _render(services, screen, notice, markup, record)
     await state.update_data(screen_key=dict(screen))
     await _sync_typing(state, screen)
     await views.set_screen(bot, message, state, text, keyboard)
@@ -356,10 +380,11 @@ async def navigate_callback(
     notice: str | None = None,
     markup: InlineKeyboardMarkup | None = None,
     push: bool = True,
+    record: StoredFile | None = None,
 ) -> None:
     if push:
         await _push_current(state)
-    text, keyboard = await _render(services, screen, notice, markup)
+    text, keyboard = await _render(services, screen, notice, markup, record)
     await state.update_data(screen_key=dict(screen))
     await _sync_typing(state, screen)
     await views.set_screen_cb(callback, state, text, keyboard)
