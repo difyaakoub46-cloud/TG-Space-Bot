@@ -58,6 +58,10 @@ class StoredFile:
     created_at: datetime
     # SHA-256 of the file bytes; empty when the file was too large to read.
     content_hash: str | None = None
+    # A row is either a file (no link columns) or a saved link, whose section is
+    # ``telegram`` or ``global``.
+    link_type: str | None = None
+    link_url: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "StoredFile":
@@ -82,7 +86,14 @@ class StoredFile:
             storage_message_id=int(row["message_id"]),
             created_at=_parse_datetime(row.get("created_at")),
             content_hash=row.get("content_hash"),
+            link_type=row.get("link_type"),
+            link_url=row.get("link_url"),
         )
+
+    @property
+    def is_link(self) -> bool:
+        """True for a saved link, false for a file."""
+        return self.link_type is not None
 
     @property
     def size_human(self) -> str:

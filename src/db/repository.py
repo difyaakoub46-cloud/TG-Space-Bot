@@ -178,6 +178,22 @@ class FileRepository:
         rows = self._rows(response)
         return StoredFile.from_row(rows[0]) if rows else None
 
+    async def find_link(self, link_url: str) -> StoredFile | None:
+        """The row already holding this exact link, if any."""
+        if not link_url:
+            return None
+        response = await self._request(
+            "GET",
+            params={
+                "select": "*",
+                "link_url": f"eq.{link_url}",
+                "link_type": "not.is.null",
+                "limit": "1",
+            },
+        )
+        rows = self._rows(response)
+        return StoredFile.from_row(rows[0]) if rows else None
+
     async def find_by_unique_id(self, file_unique_id: str) -> StoredFile | None:
         """The row already holding this exact Telegram file, if any."""
         if not file_unique_id:
@@ -198,12 +214,19 @@ class FileRepository:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        link_type: str | None = "none",
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         limit: int = 10,
         offset: int = 0,
         order: str = "created_at.desc",
     ) -> tuple[list[StoredFile], int]:
+        """A page of rows and how many match.
+
+        ``link_type`` keeps the two kinds apart: ``none`` (the default) means
+        files only, so every existing screen keeps describing the library;
+        ``telegram`` or ``global`` narrows the list to one links section.
+        """
         params: dict[str, str] = {
             "select": "*",
             "order": order,
@@ -212,6 +235,10 @@ class FileRepository:
         }
         if category is not None:
             params["category"] = f"eq.{category.value}"
+        if link_type == "none":
+            params["link_type"] = "is.null"
+        elif link_type:
+            params["link_type"] = f"eq.{link_type}"
         if created_after is not None and created_before is not None:
             # A closed window for «History uploads»: PostgREST needs both bounds on
             # the same column as one `and`, since a dict cannot repeat `created_at`.
@@ -250,6 +277,7 @@ class FileRepository:
         *,
         query: str | None = None,
         category: FileCategory | None = None,
+        link_type: str | None = "none",
         limit: int = 200,
         offset: int = 0,
     ) -> list[datetime]:
@@ -266,6 +294,10 @@ class FileRepository:
         }
         if category is not None:
             params["category"] = f"eq.{category.value}"
+        if link_type == "none":
+            params["link_type"] = "is.null"
+        elif link_type:
+            params["link_type"] = f"eq.{link_type}"
         if query:
             cleaned = _sanitize_query(query)
             if cleaned:
@@ -327,10 +359,20 @@ class FileRepository:
         """
         await self._request("HEAD", params={"select": "id", "limit": "1"})
 
-    async def count(self, *, category: FileCategory | None = None) -> int:
+    async def count(
+        self,
+        *,
+        category: FileCategory | None = None,
+        link_type: str | None = "none",
+    ) -> int:
+        """How many rows match; files only unless a links section is asked for."""
         params: dict[str, str] = {"select": "id", "limit": "1"}
         if category is not None:
             params["category"] = f"eq.{category.value}"
+        if link_type == "none":
+            params["link_type"] = "is.null"
+        elif link_type:
+            params["link_type"] = f"eq.{link_type}"
         response = await self._request(
             "HEAD", params=params, prefer="count=exact"
         )
