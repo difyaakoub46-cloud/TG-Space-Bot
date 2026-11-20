@@ -283,14 +283,9 @@ async def build(
             groups.append((JOIN_FALLBACK, views.fallback_label()))
         return views.join_groups_text(), groups_kb(groups)
 
-    # The main menu (and any screen that no longer exists) shows the library total.
+    # The main menu (and any screen that no longer exists) counts the library.
     stats = await services.files.stats()
-    return (
-        views.welcome_text(
-            int(stats.get("total", 0)), int(stats.get("total_bytes", 0) or 0)
-        ),
-        main_menu_kb(),
-    )
+    return views.welcome_text(int(stats.get("total", 0))), main_menu_kb()
 
 
 async def _push_current(state: FSMContext) -> None:

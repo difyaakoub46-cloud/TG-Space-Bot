@@ -345,15 +345,20 @@ async def set_screen_cb(
 # --------------------------------------------------------------------------- #
 # Text builders
 # --------------------------------------------------------------------------- #
-def welcome_text(total_files: int = 0, total_bytes: int = 0) -> str:
+def welcome_text(total_files: int = 0) -> str:
+    """The main menu: one line with the number of saved files.
+
+    Only the count here: the size of the library belongs to «📚 Library» and «📊
+    Statistics», which show it next to the categories it is made of.
+    """
     return "\n".join(
         [
             pick("👋 Welcome to TG-Space-Bot", "👋 مرحباً بك في TG-Space-Bot"),
             pick(
-                f"🗂 {count_files(total_files)} · {escape_text(human_total(total_bytes))} "
-                "— send a file to save it, or use the buttons below.",
-                f"🗂 {count_files(total_files)} · {escape_text(human_total(total_bytes))} "
-                "— أرسل ملفاً لحفظه، أو استخدم الأزرار أدناه.",
+                f"🗂 {count_files(total_files)} — send a file to save it, or use "
+                "the buttons below.",
+                f"🗂 {count_files(total_files)} — أرسل ملفاً لحفظه، أو استخدم "
+                "الأزرار أدناه.",
             ),
         ]
     )
@@ -491,19 +496,13 @@ def categories_text(
 ) -> str:
     """The library: the categories, then the favourite folders, then the rest.
 
-    The full folder list keeps its own screen, where it is sorted alphabetically
-    and paged, so only the favourites appear here.
+    Each category carries its own count and size, which is what this screen is
+    for: the library total is printed once, in «📊 Statistics», instead of again
+    at the top of this list. The full folder list keeps its own screen, where it
+    is sorted alphabetically and paged, so only the favourites appear here.
     """
-    total_files = sum(count for count, _size in totals.values())
-    total_bytes = sum(size for _count, size in totals.values())
-
     lines = [
         pick("📚 <b>Library</b>", "📚 <b>المكتبة</b>"),
-        "",
-        pick(
-            f"Total: {count_files(total_files)} · {escape_text(human_total(total_bytes))}",
-            f"الإجمالي: {count_files(total_files)} · {escape_text(human_total(total_bytes))}",
-        ),
         "",
         pick("<b>Categories</b>", "<b>الفئات</b>"),
     ]
