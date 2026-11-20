@@ -317,6 +317,13 @@ async def join_link_callback(
             f"\n⏳ It also expires after {ttl_minutes} minute(s).",
             f"\n⏳ كما تنتهي صلاحيته بعد {ttl_minutes} دقيقة.",
         )
+    else:
+        # Without the guard the link joins directly, but it still expires: not
+        # saying so made the owner think a leaked link stayed valid forever.
+        notice += pick(
+            f"\n\n⏳ The link expires after {ttl_minutes} minute(s).",
+            f"\n\n⏳ ينتهي الرابط بعد {ttl_minutes} دقيقة.",
+        )
     if old_id is not None:
         notice += (
             pick(
