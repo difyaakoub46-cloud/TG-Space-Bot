@@ -55,6 +55,8 @@ class StorageChatCheck:
     title: str | None = None
     reason: str | None = None
     is_fallback: bool = False
+    # The links group: it holds links, not a library category.
+    is_links: bool = False
     # None means the rights were never read (an unreachable group).
     is_admin: bool | None = None
     missing_rights: tuple[str, ...] = ()
@@ -130,6 +132,26 @@ class StorageService:
         stored, used_chat_id = await self._call(
             self._bot.copy_message,
             target_chat_id,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        return used_chat_id, stored.message_id
+
+    async def upload_link(self, message: Message) -> tuple[int, int]:
+        """Copy a message holding links into the links group.
+
+        The very same message is copied once per link (a message may carry more
+        than one), so every link has its own copy and its own row, exactly like a
+        file has its own copy in its category group.
+        """
+        target_chat_id = self._settings.storage_chat_links
+        if target_chat_id is None:
+            raise ConfigurationError(
+                "لا توجد مجموعة مهيّأة للروابط (TG_STORAGE_CHAT_LINKS)."
+            )
+        stored, used_chat_id = await self._call(
+            self._bot.copy_message,
+            int(target_chat_id),
             from_chat_id=message.chat.id,
             message_id=message.message_id,
         )
@@ -223,6 +245,13 @@ class StorageService:
         if fallback_id is not None and fallback_id not in grouped:
             grouped[fallback_id] = set()
 
+        # The links group holds links rather than a file category, so it is probed
+        # the same way and marked as such.
+        links = self._settings.storage_chat_links
+        links_id = self._current(int(links)) if links is not None else None
+        if links_id is not None and links_id not in grouped:
+            grouped[links_id] = set()
+
         async def probe(
             chat_id: int, categories: set[FileCategory]
         ) -> StorageChatCheck:
@@ -245,6 +274,7 @@ class StorageService:
                     reachable=False,
                     reason=reason,
                     is_fallback=chat_id == fallback_id,
+                    is_links=chat_id == links_id,
                 )
 
             logger.info(
@@ -257,6 +287,7 @@ class StorageService:
                 reachable=True,
                 title=chat.title,
                 is_fallback=chat_id == fallback_id,
+                is_links=chat_id == links_id,
                 is_admin=is_admin,
                 missing_rights=missing,
             )

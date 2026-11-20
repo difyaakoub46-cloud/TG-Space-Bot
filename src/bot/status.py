@@ -238,6 +238,7 @@ async def status_text(
 
     configured = settings.storage_chats()
     fallback = settings.storage_chat_fallback
+    links = settings.storage_chat_links
     reachable = [check for check in checks if check.reachable]
     broken = [check for check in checks if not check.reachable]
     allowed = settings.allowed_users()
@@ -290,10 +291,12 @@ async def status_text(
             pick(
                 f"Configured: {format_number(len(configured))} of "
                 f"{format_number(len(FileCategory))} categories · "
-                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 not configured"),
+                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 not configured")
+                + (f" · 🔗 <code>{links}</code>" if links else ""),
                 f"مهيّأة: {format_number(len(configured))} من "
                 f"{format_number(len(FileCategory))} فئة · "
-                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 غير مهيّأة"),
+                + (f"🛟 <code>{fallback}</code>" if fallback else "🛟 غير مهيّأة")
+                + (f" · 🔗 <code>{links}</code>" if links else ""),
             ),
             pick(
                 f"Reachable now: ✅ {format_number(len(reachable))} · "

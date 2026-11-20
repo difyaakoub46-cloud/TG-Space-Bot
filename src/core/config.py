@@ -91,6 +91,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Links get a group of their own: every link (Telegram or external) is copied
+    # here, and the row records which of the two lists it belongs to.
+    storage_chat_links: OptionalChatId = Field(
+        None,
+        validation_alias=AliasChoices(
+            "TG_STORAGE_CHAT_LINKS", "TG_STORAGE_CHAT_LINK"
+        ),
+    )
+
     # The emergency group: any file whose registration in Supabase fails is copied
     # here instead of the library, and «🔧 إصلاح» finishes it later. It never
     # replaces a TG_STORAGE_CHAT_* value.

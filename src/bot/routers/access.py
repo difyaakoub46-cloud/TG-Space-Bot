@@ -111,6 +111,9 @@ def _storage_ids(services: Services) -> set[int]:
     fallback = services.settings.storage_chat_fallback
     if fallback is not None:
         configured.append(fallback)
+    links = services.settings.storage_chat_links
+    if links is not None:
+        configured.append(links)
     storage = _storage(services)
     for chat_id in configured:
         ids.add(int(chat_id))
@@ -248,6 +251,19 @@ async def join_link_callback(
             return
         label = views.fallback_label()
         invite_name = "owner-fallback"
+    elif data.value == navigation.JOIN_LINKS:
+        chat_id = services.settings.storage_chat_links
+        if chat_id is None:
+            await _alert(
+                callback,
+                pick(
+                    "⚠️ No links group is configured.",
+                    "⚠️ لا توجد مجموعة روابط مهيّأة.",
+                ),
+            )
+            return
+        label = views.links_group_label()
+        invite_name = "owner-links"
     else:
         category = parse_category(data.value)
         try:

@@ -59,6 +59,8 @@ MAX_TRAIL = 20
 
 # The JoinCB value of the fallback group (its category value is meaningless).
 JOIN_FALLBACK = "fallback"
+# The JoinCB value of the links group (it holds links, not a file category).
+JOIN_LINKS = "links"
 
 MAIN: dict[str, object] = {"k": "main"}
 
@@ -281,6 +283,8 @@ async def build(
         ]
         if settings.storage_chat_fallback is not None:
             groups.append((JOIN_FALLBACK, views.fallback_label()))
+        if settings.storage_chat_links is not None:
+            groups.append((JOIN_LINKS, views.links_group_label()))
         return views.join_groups_text(), groups_kb(groups)
 
     # The main menu (and any screen that no longer exists) counts the library.

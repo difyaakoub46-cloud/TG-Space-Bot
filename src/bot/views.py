@@ -72,6 +72,16 @@ def fallback_label() -> str:
     return pick("🛟 Emergency", "🛟 احتياطية")
 
 
+def links_label() -> str:
+    """The main-menu entry of the links screen."""
+    return pick("🔗 Links", "🔗 الروابط")
+
+
+def links_group_label() -> str:
+    """The links storage group, named like the category and emergency groups."""
+    return pick("🔗 Links", "🔗 روابط")
+
+
 # The two nouns every count on a screen is made of, in both languages.
 _FILES = ("file", "files", ("ملف واحد", "ملفان", "ملفات", "ملفاً"))
 _FOLDERS = ("folder", "folders", ("مجلد واحد", "مجلدان", "مجلدات", "مجلداً"))
@@ -445,6 +455,8 @@ def storage_group_label(check: Any) -> str:
         return fallback_label()
     categories = getattr(check, "categories", ()) or ()
     if not categories:
+        if getattr(check, "is_links", False):
+            return links_group_label()
         return "—"
     return "، ".join(
         category_label(category)
