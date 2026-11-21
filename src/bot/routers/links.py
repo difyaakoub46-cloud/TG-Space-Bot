@@ -28,6 +28,7 @@ from src.services.container import Services
 from src.services.files import LinkSaveReport
 from src.utils.formatters import escape_text
 from src.utils.links import TELEGRAM, extract_links
+from src.utils.telegram import safe_delete_messages
 
 router = Router(name="links")
 
@@ -131,7 +132,7 @@ async def menu_links_callback(
 # --------------------------------------------------------------------------- #
 @router.message(F.chat.type == ChatType.PRIVATE, HasLinks())
 async def save_links_message(
-    message: Message, services: Services, state: FSMContext
+    message: Message, services: Services, state: FSMContext, bot
 ) -> None:
     """Save every link of the message, then report the result."""
     links = extract_links(message.text or "")
@@ -151,12 +152,32 @@ async def save_links_message(
         await views.remember(state, sent.message_id)
         return
 
+    await views.reset_flow(state)
+    # Track the incoming message too, so a copy that survives any failure is
+    # removed the next time the main menu is opened (the same as an upload).
+    await views.remember(state, message.message_id)
+
     report = await services.files.save_links(message, links)
-    sent = await message.answer(
-        saved_text(report),
-        reply_markup=main_menu_kb(),
-        disable_web_page_preview=True,
+
+    # The message did its job once its link is stored (or already on record), so
+    # it is removed exactly like an uploaded file's message and the chat stays
+    # clean. A failed link keeps its message, so the text can still be read and
+    # sent again.
+    if not report.failures:
+        await safe_delete_messages(bot, message.chat.id, [message.message_id])
+
+    user_id = int(message.from_user.id) if message.from_user else 0
+    if not report.failures and not services.preferences.show_saved_screen(user_id):
+        return
+
+    # The result is drawn on the single persistent screen, never as a new message
+    # with its own main-menu keyboard: that would leave one more menu box behind
+    # on every link and fill the chat with duplicates.
+    await navigation.navigate_message(
+        message,
+        state,
+        bot,
+        services,
+        file_list.new_screen("links", TELEGRAM, user_id),
+        notice=saved_text(report),
     )
-    # The summary is part of the screen the main menu wipes, like every other
-    # answer the bot leaves in the chat.
-    await views.remember(state, sent.message_id)

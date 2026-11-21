@@ -23,9 +23,10 @@ from conftest import (
 from file_list_support import TODAY, moment, record, screen, service
 from src.bot import file_list, views
 from src.bot.keyboards import main_menu_kb
+from src.bot.routers import links as links_router
 from src.core.config import ConfigurationError
 from src.db.repository import SupabaseError
-from src.services.files import FileStorageServices
+from src.services.files import FileStorageServices, LinkSaveReport
 from src.services.storage import StorageService
 from src.utils.links import GLOBAL, TELEGRAM, extract_links
 
@@ -235,3 +236,111 @@ async def test_a_link_button_opens_the_link_and_names_its_section() -> None:
 def test_the_main_menu_has_the_links_button() -> None:
     texts = [button.text for row in main_menu_kb().inline_keyboard for button in row]
     assert views.links_label() in texts
+
+
+# --------------------------------------------------------------------------- #
+# The handler: a stored link leaves no message behind, exactly like an upload
+# --------------------------------------------------------------------------- #
+class _DeleteBot:
+    """Records every delete the handler asks for."""
+
+    def __init__(self) -> None:
+        self.deleted: list[int] = []
+
+    async def delete_messages(self, chat_id: int, message_ids: list[int]) -> bool:
+        self.deleted.extend(message_ids)
+        return True
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        self.deleted.append(message_id)
+        return True
+
+
+class _LinkMessage:
+    """One text message carrying a link, with the answers the handler sends."""
+
+    def __init__(self, message_id: int = 21, text: str = "https://t.me/abc") -> None:
+        self.chat = SimpleNamespace(id=5)
+        self.message_id = message_id
+        self.from_user = SimpleNamespace(id=7)
+        self.text = text
+        self.answers: list[tuple[str, dict]] = []
+
+    async def answer(self, text: str, **kwargs):
+        self.answers.append((text, kwargs))
+        return SimpleNamespace(
+            chat=SimpleNamespace(id=self.chat.id), message_id=999, text=text
+        )
+
+
+class _SaveFiles:
+    """The one service call the handler makes."""
+
+    def __init__(self, report: LinkSaveReport) -> None:
+        self.report = report
+        self.calls = 0
+
+    async def save_links(self, message, links):
+        self.calls += 1
+        return self.report
+
+
+async def _run_handler(
+    monkeypatch, tmp_path, report: LinkSaveReport, *, show_saved: bool = True
+) -> tuple[_DeleteBot, _LinkMessage, dict[str, object]]:
+    bot, message = _DeleteBot(), _LinkMessage()
+    services = SimpleNamespace(
+        settings=make_settings(tmp_path, storage_chat_links=LINKS_GROUP),
+        files=_SaveFiles(report),
+        preferences=SimpleNamespace(show_saved_screen=lambda _user_id: show_saved),
+    )
+
+    async def reset_flow(state, **kwargs) -> None:
+        return None
+
+    async def remember(state, *message_ids: int) -> None:
+        return None
+
+    captured: dict[str, object] = {}
+
+    async def navigate(message, state, bot, services, target, **kwargs) -> None:
+        captured["screen"] = dict(target)
+        captured["notice"] = kwargs.get("notice")
+
+    monkeypatch.setattr(links_router.views, "reset_flow", reset_flow)
+    monkeypatch.setattr(links_router.views, "remember", remember)
+    monkeypatch.setattr(links_router.navigation, "navigate_message", navigate)
+
+    await links_router.save_links_message(message, services, SimpleNamespace(), bot)
+    return bot, message, captured
+
+
+async def test_a_stored_link_message_is_removed_and_leaves_one_screen(
+    monkeypatch, tmp_path
+) -> None:
+    report = LinkSaveReport()
+    report.saved.append(
+        SimpleNamespace(link_url="https://t.me/abc", link_type=TELEGRAM)
+    )
+
+    bot, message, captured = await _run_handler(monkeypatch, tmp_path, report)
+
+    # The message goes, like the message of a stored file...
+    assert bot.deleted == [message.message_id]
+    # ...and no new message with its own main-menu keyboard is sent.
+    assert message.answers == []
+    # The result is drawn on the single persistent screen, on the links list.
+    assert captured["screen"]["k"] == "list"
+    assert captured["screen"]["v"] == "links"
+    assert "https://t.me/abc" in str(captured["notice"])
+
+
+async def test_a_failed_link_keeps_its_message(monkeypatch, tmp_path) -> None:
+    report = LinkSaveReport()
+    report.failures.append(("https://t.me/abc", "the links group is not writable"))
+
+    bot, message, captured = await _run_handler(monkeypatch, tmp_path, report)
+
+    assert bot.deleted == []
+    assert message.message_id not in bot.deleted
+    assert "not writable" in str(captured["notice"])
