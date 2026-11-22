@@ -9,6 +9,7 @@ from aiogram import Bot
 from src.core.config import Settings
 from src.db.repository import FileRepository
 from src.services.files import FileStorageServices
+from src.services.links import LinkResolver
 from src.services.pending import PendingStore
 from src.services.preferences import UserPreferences
 from src.services.storage import StorageService
@@ -30,6 +31,9 @@ class Services:
         self.files = FileStorageServices(
             settings, self.repository, pending=self.pending
         )
+        # Readable names for the saved links (a channel title, a bot's name, or a
+        # domain); it only needs the bot, which is attached at boot.
+        self.links = LinkResolver()
         self.storage: StorageService | None = None
         self.bot: Bot | None = None
         self.started_at = datetime.now(timezone.utc)
@@ -40,6 +44,7 @@ class Services:
         self.storage = StorageService(bot, self.settings)
         self.files.bind_storage(self.storage)
         self.files.bind_bot(bot)
+        self.links.bind_bot(bot)
 
     def uptime_seconds(self) -> float:
         return (datetime.now(timezone.utc) - self.started_at).total_seconds()

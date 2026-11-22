@@ -7,9 +7,17 @@ classified here instead of at the screen:
 * ``telegram`` — a Telegram link (``t.me/...``, ``telegram.me/...``, ``tg://...``)
 * ``global``   — any other ``http``/``https`` link
 
+A username typed on its own (``@MyBot``) is a Telegram link too. It is only read
+when it is the whole message: an ``@`` inside a sentence is a mention, not
+something the user asked to keep, and an address like ``name@host.com`` must
+never turn into a channel. Such a link carries ``handle`` so the caller can ask
+Telegram what that account really is (a bot is labelled differently).
+
 The URL is normalised (scheme and host in lower case, no trailing punctuation)
 before it is used as the identity of the link: the database keeps one row per
-URL, so a link typed twice must produce the same string both times.
+URL, so a link typed twice must produce the same string both times. A username
+is lower-cased in the URL it produces, because Telegram usernames are not
+case-sensitive: ``@MyBot`` and ``https://t.me/mybot`` are one link.
 """
 
 from __future__ import annotations
@@ -40,6 +48,10 @@ _LINK_RE = re.compile(
 # Sentence punctuation that ends up glued to a pasted link, Latin and Arabic.
 _TRAILING = " \t\r\n.,;:!?…'\"”’»«>)]}،؛؟"
 
+# A username alone in the message. Telegram allows 5 to 32 characters, the first
+# one a letter, and a letter is required after the «@» (so «@123» is not one).
+_HANDLE_RE = re.compile(r"^\s*@([A-Za-z][A-Za-z0-9_]{4,31})\s*$")
+
 
 @dataclass(frozen=True, slots=True)
 class Link:
@@ -47,10 +59,18 @@ class Link:
 
     url: str
     link_type: str
+    # The username as it was typed (without the «@»), when the link came from a
+    # bare «@name»; None for every other link.
+    handle: str | None = None
 
     @property
     def is_telegram(self) -> bool:
         return self.link_type == TELEGRAM
+
+    @property
+    def from_handle(self) -> bool:
+        """True when the user typed a username instead of an address."""
+        return self.handle is not None
 
 
 def _clean(raw: str) -> str:
@@ -106,7 +126,11 @@ def _has_host(url: str) -> bool:
 
 
 def extract_links(text: str | None) -> list[Link]:
-    """Every link of a message, de-duplicated, in the order they appear."""
+    """Every link of a message, de-duplicated, in the order they appear.
+
+    A bare username (``@name``) counts as one link only when it is the whole
+    message, so a mention inside a sentence is left alone.
+    """
     if not text:
         return []
     found: dict[str, Link] = {}
@@ -118,6 +142,12 @@ def extract_links(text: str | None) -> list[Link]:
         if link_type == GLOBAL and not _has_host(url):
             continue
         found[url] = Link(url=url, link_type=link_type)
+
+    handle = _HANDLE_RE.match(text)
+    if handle is not None:
+        name = handle.group(1)
+        url = f"https://t.me/{name.lower()}"
+        found.setdefault(url, Link(url=url, link_type=TELEGRAM, handle=name))
     return list(found.values())
 
 
