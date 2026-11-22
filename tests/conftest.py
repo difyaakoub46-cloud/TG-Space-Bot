@@ -67,6 +67,12 @@ class FakeBot:
         return True
 
 
+def _display_name(fields: dict[str, Any]) -> str:
+    """The fake's copy of :attr:`StoredFile.link_display_name`."""
+    name = fields.get("link_name") or fields.get("link_url") or ""
+    return f"{name} | Bot" if fields.get("link_is_bot") else name
+
+
 class FakeRepository:
     """Scriptable replacement for :class:`FileRepository`.
 
@@ -82,6 +88,8 @@ class FakeRepository:
         self.fail_find: Exception | None = None
         self.fail_create: Exception | None = None
         self.fail_count: Exception | None = None
+        # Every ``set_link_name`` call, as (file id, name, is_bot).
+        self.renamed: list[tuple[str, str | None, bool]] = []
         self._message_ids = iter(range(1, 1000))
 
     async def find_by_unique_id(self, file_unique_id: str):
@@ -107,8 +115,25 @@ class FakeRepository:
             content_hash=fields.get("content_hash"),
             link_type=fields.get("link_type"),
             link_url=fields.get("link_url"),
+            link_name=fields.get("link_name"),
+            link_is_bot=bool(fields.get("link_is_bot")),
+            link_display_name=_display_name(fields),
             created_at=datetime.now(timezone.utc),
         )
+
+    async def set_link_name(self, file_id: str, name: str | None, is_bot: bool = False):
+        self.renamed.append((file_id, name, is_bot))
+        record = SimpleNamespace(
+            id=file_id,
+            file_name=name or "",
+            link_name=name,
+            link_is_bot=is_bot,
+            link_url="",
+            link_type="telegram",
+            created_at=datetime.now(timezone.utc),
+        )
+        record.link_display_name = f"{name} | Bot" if is_bot else (name or "")
+        return record
 
     async def count(self, **_: Any) -> int:
         if self.fail_count is not None:

@@ -28,12 +28,12 @@ class Services:
         # Each user's interface language (English until they change it).
         self.preferences = UserPreferences(settings.preferences_path)
         self.preferences.load()
-        self.files = FileStorageServices(
-            settings, self.repository, pending=self.pending
-        )
         # Readable names for the saved links (a channel title, a bot's name, or a
         # domain); it only needs the bot, which is attached at boot.
         self.links = LinkResolver()
+        self.files = FileStorageServices(
+            settings, self.repository, pending=self.pending, links=self.links
+        )
         self.storage: StorageService | None = None
         self.bot: Bot | None = None
         self.started_at = datetime.now(timezone.utc)

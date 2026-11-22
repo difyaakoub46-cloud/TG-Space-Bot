@@ -273,14 +273,23 @@ def _link_name(url: str) -> str:
     return name or url
 
 
+def _fit_label(name: str) -> str:
+    """A link label cut to the one-line limit, whatever its source."""
+    return name if len(name) <= _MAX_LABEL else f"{name[: _MAX_LABEL - 1]}…"
+
+
 def _link_label(file) -> str:
-    """One link button: its type, its address and the time it was saved.
+    """One link button: its name («Name | Bot» for a bot) and when it was saved.
 
     A link has no size, so its section takes the place the size holds on a file
-    button, and the whole button opens the link itself.
+    button, and the whole button opens the link itself. The name is the one saved
+    with the row; a row stored before names existed keeps its address as the label.
     """
     mark = "📱" if file.link_type == "telegram" else "🌐"
-    return f"{mark} {_link_name(file.link_url or file.file_name)} - {file.created_at:%H:%M}"
+    name = getattr(file, "link_display_name", None) or _link_name(
+        file.link_url or file.file_name
+    )
+    return f"{mark} {_fit_label(name)} - {file.created_at:%H:%M}"
 
 
 def _section_buttons(ctx: FileListContext) -> list[InlineKeyboardButton]:

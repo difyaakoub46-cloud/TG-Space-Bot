@@ -62,6 +62,10 @@ class StoredFile:
     # ``telegram`` or ``global``.
     link_type: str | None = None
     link_url: str | None = None
+    # The readable name of a link (a channel title, a bot's name, a domain). Older
+    # rows leave it empty and the screens fall back to the address itself.
+    link_name: str | None = None
+    link_is_bot: bool = False
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "StoredFile":
@@ -88,12 +92,24 @@ class StoredFile:
             content_hash=row.get("content_hash"),
             link_type=row.get("link_type"),
             link_url=row.get("link_url"),
+            link_name=row.get("link_name"),
+            link_is_bot=bool(row.get("link_is_bot")),
         )
 
     @property
     def is_link(self) -> bool:
         """True for a saved link, false for a file."""
         return self.link_type is not None
+
+    @property
+    def link_display_name(self) -> str:
+        """The name a link is listed by: its saved name, else its address.
+
+        A bot carries the «| Bot» badge, so the list and the result screen name it
+        the same way instead of each deriving its own label.
+        """
+        name = self.link_name or self.link_url or self.file_name
+        return f"{name} | Bot" if self.link_is_bot else name
 
     @property
     def size_human(self) -> str:

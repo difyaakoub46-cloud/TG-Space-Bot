@@ -438,6 +438,23 @@ class FileRepository:
         value = rows[0].get("value")
         return int(value) if value is not None else None
 
+    async def set_link_name(
+        self, file_id: str, name: str | None, is_bot: bool = False
+    ) -> StoredFile | None:
+        """Name a saved link (and say whether it is a bot).
+
+        Only a link row is touched: the filter keeps a file from ever being given a
+        link label, and the address itself — the row's identity — is left alone.
+        """
+        response = await self._request(
+            "PATCH",
+            params={"id": f"eq.{file_id}", "link_type": "not.is.null"},
+            json={"link_name": name, "link_is_bot": bool(is_bot)},
+            prefer="return=representation",
+        )
+        rows = self._rows(response)
+        return StoredFile.from_row(rows[0]) if rows else None
+
     async def rename(self, file_id: str, name: str) -> StoredFile | None:
         """Change the display name only: the stored Telegram copy is untouched."""
         response = await self._request(

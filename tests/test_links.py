@@ -26,7 +26,8 @@ from src.bot.keyboards import main_menu_kb
 from src.bot.routers import links as links_router
 from src.core.config import ConfigurationError
 from src.db.repository import SupabaseError
-from src.services.files import FileStorageServices, LinkSaveReport
+from src.services.files import FileStorageServices, LinkSaveReport, NotABotError
+from src.services.links import LinkInfo
 from src.services.storage import StorageService
 from src.utils.links import GLOBAL, TELEGRAM, extract_links
 
@@ -344,3 +345,158 @@ async def test_a_failed_link_keeps_its_message(monkeypatch, tmp_path) -> None:
     assert bot.deleted == []
     assert message.message_id not in bot.deleted
     assert "not writable" in str(captured["notice"])
+
+
+# --------------------------------------------------------------------------- #
+# Names: the bot badge, and the handle that is refused
+# --------------------------------------------------------------------------- #
+class _Resolver:
+    """A resolver with scripted answers, so no page is ever fetched."""
+
+    def __init__(self, **infos: LinkInfo) -> None:
+        self.infos = infos
+        self.calls: list[str] = []
+
+    async def resolve(self, url: str) -> LinkInfo:
+        self.calls.append(url)
+        return self.infos.get(url, LinkInfo())
+
+
+async def test_a_confirmed_bot_keeps_its_name_and_its_badge(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(
+        _Resolver(
+            **{
+                "https://t.me/helperbot": LinkInfo(
+                    name="Helper", is_bot=True, source="preview"
+                )
+            }
+        )
+    )
+
+    report = await services.save_links(make_message(), extract_links("@HelperBot"))
+
+    assert len(report.saved) == 1
+    row = repository.rows[0]
+    assert row["link_url"] == "https://t.me/helperbot"
+    assert row["link_name"] == "Helper"
+    assert row["link_is_bot"] is True
+    # The same badge the list shows, now that the row carries the flag.
+    assert report.saved[0].link_display_name == "Helper | Bot"
+
+
+async def test_a_handle_that_is_not_a_bot_is_refused_before_the_copy(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(
+        _Resolver(
+            **{
+                "https://t.me/someone": LinkInfo(name="Someone", source="preview")
+            }
+        )
+    )
+
+    report = await services.save_links(make_message(), extract_links("@Someone"))
+
+    assert report.saved == []
+    assert len(report.rejected) == 1
+    assert report.rejected[0].unconfirmed is False
+    assert bot.calls == []  # nothing was copied into the links group
+    assert repository.rows == []  # and no row was written
+
+
+async def test_a_handle_that_cannot_be_checked_is_refused_as_unconfirmed(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(_Resolver())  # the default answer is an unread fallback
+
+    report = await services.save_links(make_message(), extract_links("@someone"))
+
+    assert report.saved == []
+    assert report.rejected[0].unconfirmed is True
+    assert bot.calls == []
+
+
+async def test_an_address_keeps_its_name_without_a_badge(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(
+        _Resolver(
+            **{
+                "https://t.me/space_channel": LinkInfo(
+                    name="Space Channel", source="telegram"
+                )
+            }
+        )
+    )
+
+    report = await services.save_links(
+        make_message(), extract_links("https://t.me/space_channel")
+    )
+
+    row = repository.rows[0]
+    assert row["link_name"] == "Space Channel"
+    assert row["link_is_bot"] is False
+    assert report.saved[0].link_display_name == "Space Channel"
+
+
+def test_a_bot_button_shows_its_name_and_the_badge() -> None:
+    row = dataclasses.replace(
+        _link_row(1, "https://t.me/helper", TELEGRAM),
+        link_name="Helper",
+        link_is_bot=True,
+    )
+
+    label = file_list._link_label(row)
+
+    assert "Helper | Bot" in label
+    assert "https://t.me/helper" not in label
+
+
+def test_the_result_screen_shows_the_name_instead_of_the_address() -> None:
+    report = LinkSaveReport()
+    report.saved.append(
+        SimpleNamespace(
+            link_url="https://t.me/abc",
+            link_type=TELEGRAM,
+            link_display_name="Helper | Bot",
+        )
+    )
+
+    notice = links_router.saved_text(report)
+
+    assert "Helper | Bot" in notice
+    assert "https://t.me/abc" not in notice
+
+
+def test_the_result_screen_explains_a_refused_handle() -> None:
+    report = LinkSaveReport()
+    report.rejected.append(NotABotError(extract_links("@Someone")[0]))
+
+    notice = links_router.saved_text(report)
+
+    assert "@Someone" in notice
+    assert "not a bot" in notice
+
+
+async def test_a_refused_handle_keeps_its_message_and_is_explained(
+    monkeypatch, tmp_path
+) -> None:
+    report = LinkSaveReport()
+    report.rejected.append(NotABotError(extract_links("@Someone")[0]))
+
+    bot, message, captured = await _run_handler(monkeypatch, tmp_path, report)
+
+    assert bot.deleted == []
+    assert message.message_id not in bot.deleted
+    assert "not a bot" in str(captured["notice"])
+
+
+async def test_a_link_name_can_be_set_later(tmp_path) -> None:
+    repository = FakeRepository()
+    services = _link_service(tmp_path, FakeBot(), repository)
+
+    await services.set_link_name("7", "My Name", True)
+
+    assert repository.renamed == [("7", "My Name", True)]

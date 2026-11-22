@@ -20,6 +20,7 @@ from src.core.config import Settings
 from src.db.models import Folder, StoredFile
 from src.db.repository import FileRepository, SupabaseError
 from src.services.cache import TTLCache
+from src.services.links import LinkInfo, LinkResolver
 from src.services.pending import PendingFile, PendingStore
 from src.services.storage import StorageService
 from src.utils.filetypes import FileCandidate, FileCategory, parse_category
@@ -211,6 +212,22 @@ class DuplicateLinkError(Exception):
         self.record = record
 
 
+class NotABotError(Exception):
+    """A bare ``@username`` that was not saved because it is not a confirmed bot.
+
+    A username typed on its own is only kept once Telegram itself says the account
+    is a bot: a person's or a channel's handle has no name to show in the links
+    list (and the old filter would have saved the handle as if it were a bot).
+    ``unconfirmed`` is set when nothing could be read at all, so the user is told
+    «could not check» instead of «this is not a bot».
+    """
+
+    def __init__(self, link: Link, *, unconfirmed: bool = False) -> None:
+        super().__init__(f"@{link.handle} is not a confirmed bot")
+        self.link = link
+        self.unconfirmed = unconfirmed
+
+
 class QuarantinedFileError(Exception):
     """The file could not be registered, so it is held in the fallback group."""
 
@@ -238,10 +255,12 @@ class LinkSaveReport:
     saved: list[StoredFile] = field(default_factory=list)
     duplicates: list[StoredFile] = field(default_factory=list)
     failures: list[tuple[str, str]] = field(default_factory=list)
+    # Bare usernames that Telegram did not confirm as bots, so nothing was copied.
+    rejected: list[NotABotError] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return not (self.saved or self.duplicates or self.failures)
+        return not (self.saved or self.duplicates or self.failures or self.rejected)
 
 
 class FileStorageServices:
@@ -254,12 +273,14 @@ class FileStorageServices:
         storage: StorageService | None = None,
         bot: Bot | None = None,
         pending: PendingStore | None = None,
+        links: LinkResolver | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._storage = storage
         self._bot = bot
         self._pending = pending
+        self._links = links
         # Library totals, category totals and the folders of each user only change
         # on a write, so a screen may reuse them for a few seconds.
         self._cache = TTLCache(CACHE_TTL_SECONDS)
@@ -275,6 +296,10 @@ class FileStorageServices:
 
     def bind_storage(self, storage: StorageService) -> None:
         self._storage = storage
+
+    def bind_links(self, links: LinkResolver) -> None:
+        """Attach the resolver that reads a link's name from Telegram."""
+        self._links = links
 
     @property
     def pending(self) -> PendingStore:
@@ -482,6 +507,8 @@ class FileStorageServices:
         for link in links:
             try:
                 report.saved.append(await self.save_link(message, link))
+            except NotABotError as exc:
+                report.rejected.append(exc)
             except DuplicateLinkError as exc:
                 report.duplicates.append(exc.record)
             except (SupabaseError, TelegramAPIError, OSError) as exc:
@@ -490,8 +517,27 @@ class FileStorageServices:
                 )
         return report
 
+    async def link_info(self, link: Link) -> LinkInfo | None:
+        """What the link should be called, or None when no resolver is attached."""
+        if self._links is None:
+            return None
+        return await self._links.resolve(link.url)
+
     async def save_link(self, message: Message, link: Link) -> StoredFile:
-        """Copy the message into the links group and record the link."""
+        """Copy the message into the links group and record the link.
+
+        A bare ``@username`` is only stored once Telegram confirms it is a bot: it
+        is refused *before* the copy is made, so a rejected handle leaves no
+        message behind in the links group. Any other link keeps its address as the
+        identity and takes the name that could be read, best effort.
+        """
+        info = await self.link_info(link)
+        if link.from_handle:
+            if info is None or not info.confirmed:
+                raise NotABotError(link, unconfirmed=True)
+            if not info.is_bot:
+                raise NotABotError(link)
+
         existing = await self._repository.find_link(link.url)
         if existing is not None:
             raise DuplicateLinkError(existing)
@@ -512,6 +558,8 @@ class FileStorageServices:
                 message_id=message_id,
                 link_type=link.link_type,
                 link_url=link.url,
+                link_name=info.name if info else None,
+                link_is_bot=bool(info and info.is_bot),
             )
         except SupabaseError as exc:
             # The copy must never outlive its row: the group would hold a link the
@@ -946,6 +994,14 @@ class FileStorageServices:
             record.storage_chat_id, record.storage_message_id, target_chat_id
         )
         return message_id
+
+    async def set_link_name(
+        self, file_id: str, name: str | None, is_bot: bool = False
+    ) -> StoredFile | None:
+        """Give a link the name it should be listed by (a manual or resolved one)."""
+        record = await self._repository.set_link_name(file_id, name, is_bot)
+        self._invalidate_catalog()
+        return record
 
     async def rename(self, file_id: str, name: str) -> StoredFile | None:
         """Rename a file in the library (the Telegram copy keeps its own name)."""

@@ -50,31 +50,46 @@ def _reason(exc: str) -> str:
     return html.escape(" ".join(str(exc).split())[:200] or "error")
 
 
+def _display_name(record) -> str:
+    """The name a link is shown by: the saved one, else its address."""
+    return (
+        getattr(record, "link_display_name", None)
+        or record.link_url
+        or record.file_name
+    )
+
+
 def saved_text(report: LinkSaveReport) -> str:
     """What the message with the links produced, link by link."""
+    counts = [
+        pick(
+            f"✅ {len(report.saved)} saved",
+            f"✅ {len(report.saved)} محفوظ",
+        ),
+        pick(
+            f"♻️ {len(report.duplicates)} already there",
+            f"♻️ {len(report.duplicates)} موجود أصلاً",
+        ),
+        pick(
+            f"❌ {len(report.failures)} failed",
+            f"❌ {len(report.failures)} فشل",
+        ),
+    ]
+    if report.rejected:
+        counts.append(
+            pick(
+                f"🚫 {len(report.rejected)} not a bot",
+                f"🚫 {len(report.rejected)} ليس بوتاً",
+            )
+        )
     lines = [
         pick("🔗 <b>Links</b>", "🔗 <b>الروابط</b>"),
-        " · ".join(
-            [
-                pick(
-                    f"✅ {len(report.saved)} saved",
-                    f"✅ {len(report.saved)} محفوظ",
-                ),
-                pick(
-                    f"♻️ {len(report.duplicates)} already there",
-                    f"♻️ {len(report.duplicates)} موجود أصلاً",
-                ),
-                pick(
-                    f"❌ {len(report.failures)} failed",
-                    f"❌ {len(report.failures)} فشل",
-                ),
-            ]
-        ),
+        " · ".join(counts),
         "",
     ]
     for record in report.saved:
         lines.append(
-            f"✅ {escape_text(record.link_url or '')} — "
+            f"✅ {escape_text(_display_name(record))} — "
             + (
                 pick("Telegram", "تيليغرام")
                 if record.link_type == "telegram"
@@ -86,6 +101,20 @@ def saved_text(report: LinkSaveReport) -> str:
             f"♻️ {escape_text(record.link_url or '')} — "
             + pick("already in the list", "موجود في القائمة أصلاً")
         )
+    for rejected in report.rejected:
+        handle = f"@{rejected.link.handle or ''}"
+        reason = (
+            pick(
+                "could not confirm this is a bot, so nothing was saved",
+                "تعذّر التأكد أن هذا الحساب بوت، فلم يُحفظ شيء",
+            )
+            if rejected.unconfirmed
+            else pick(
+                "this account is not a bot, so nothing was saved",
+                "هذا الحساب ليس بوتاً، فلم يُحفظ شيء",
+            )
+        )
+        lines.append(f"🚫 {escape_text(handle)} — {reason}")
     for url, reason in report.failures:
         lines.append(f"❌ {escape_text(url)} — {_reason(reason)}")
     return "\n".join(lines)
@@ -163,11 +192,12 @@ async def save_links_message(
     # it is removed exactly like an uploaded file's message and the chat stays
     # clean. A failed link keeps its message, so the text can still be read and
     # sent again.
-    if not report.failures:
+    kept_message = bool(report.failures or report.rejected)
+    if not kept_message:
         await safe_delete_messages(bot, message.chat.id, [message.message_id])
 
     user_id = int(message.from_user.id) if message.from_user else 0
-    if not report.failures and not services.preferences.show_saved_screen(user_id):
+    if not kept_message and not services.preferences.show_saved_screen(user_id):
         return
 
     # The result is drawn on the single persistent screen, never as a new message
