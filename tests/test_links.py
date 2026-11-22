@@ -810,15 +810,17 @@ async def test_edit_mode_turns_the_link_buttons_into_callbacks() -> None:
     assert {(open_.action, open_.link_id) for open_ in opens} == {("open", "id-1")}
 
 
-async def test_the_search_list_has_no_edit_switch() -> None:
+async def test_the_search_list_carries_the_file_switch_not_the_links_one() -> None:
     services = SimpleNamespace(
         files=service([record(1, moment(TODAY, 12), name="a.pdf")])
     )
 
     _text, markup = await file_list.screen(services, screen("search", "a.pdf"))
 
-    actions = [FileListCB.unpack(data) for data in _actions(markup, "fl:")]
-    assert all(action.action != "edit" for action in actions)
+    texts = [button.text for button in _buttons(markup)]
+    # The links screen's own toggle stays there; the shared file lists add theirs.
+    assert "🔴 ✏️ Edit: off" in texts
+    assert "✏️ Edit mode: off" not in texts
 
 
 async def test_the_switch_flips_the_mode_without_moving_the_list(monkeypatch) -> None:

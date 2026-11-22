@@ -147,9 +147,9 @@ async def test_an_empty_list_says_so_without_losing_its_controls(view: str) -> N
     )
 
     assert "No matching files" in text or "No files in this period" in text
-    # Filters, sort, (clear for search), back / main menu. There is no page row:
-    # an empty period has nowhere to page to, so it gets no pagers.
-    assert len(markup.inline_keyboard) == (4 if view == "search" else 3)
+    # Filters, sort, (clear for search), the edit switch, back / main menu. There
+    # is no page row: an empty period has nowhere to page to, so it gets no pagers.
+    assert len(markup.inline_keyboard) == (5 if view == "search" else 4)
     assert markup.inline_keyboard[-1][0].callback_data.startswith("menu:back")
 
 

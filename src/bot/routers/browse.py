@@ -115,6 +115,54 @@ async def category_callback(
     )
 
 
+@router.callback_query(FileCB.filter(F.action == "quick"))
+async def file_quick_send_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """«Edit» is off: the tap sends the file at once and the list stays on screen.
+
+    It is the delivery the card's «📤 Send» makes, with the same tracking, so
+    «↩️ Back» and the main menu keep removing the copy exactly as they do now.
+    """
+    data = FileCB.unpack(callback.data)
+    record = await services.files.get(data.file_id)
+    if record is None:
+        await views.ack(callback, pick("The file no longer exists.", "الملف غير موجود."), show_alert=True)
+        return
+
+    try:
+        delivered_id = await services.files.deliver(
+            record, callback.message.chat.id
+        )
+    except TelegramAPIError as exc:
+        logger.warning("Could not deliver %s: %s", record.id, exc)
+        await views.ack(callback,
+            pick(
+                "Could not send the file; it may have been deleted from its storage group.",
+                "تعذّر إرسال الملف، ربما حُذف من مجموعة التخزين.",
+            ),
+            show_alert=True,
+        )
+        return
+
+    # The copy is tracked exactly like one sent from the card, so the existing
+    # cleanup keeps working untouched.
+    await views.remember(state, delivered_id)
+    await navigation.track_delivered(state, delivered_id)
+    current = dict((await state.get_data()).get("screen_key") or {})
+    if current.get("k") != "list":
+        current = file_list.new_screen("search", "", int(callback.from_user.id))
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        current,
+        notice=views.file_sent_text(record),
+        push=False,
+    )
+
+
 @router.callback_query(FileCB.filter(F.action == "view"))
 async def file_view_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot

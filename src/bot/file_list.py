@@ -312,6 +312,16 @@ def _edit_button(ctx: FileListContext) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=callback_data(ctx, "edit"))
 
 
+def _file_edit_button(ctx: FileListContext) -> InlineKeyboardButton:
+    """The file lists' switch: red sends at once, green opens the file's card."""
+    text = (
+        pick("🟢 ✏️ Edit: on", "🟢 ✏️ التعديل: مفعّل")
+        if ctx.edit
+        else pick("🔴 ✏️ Edit: off", "🔴 ✏️ التعديل: مغلق")
+    )
+    return InlineKeyboardButton(text=text, callback_data=callback_data(ctx, "edit"))
+
+
 def _section_buttons(ctx: FileListContext) -> list[InlineKeyboardButton]:
     """The two sections of the links screen, the one on screen marked ✅."""
     return [
@@ -452,7 +462,11 @@ def file_list_kb(
         builder.row(
             InlineKeyboardButton(
                 text=_file_label(file),
-                callback_data=FileCB(action="view", file_id=file.id).pack(),
+                # Off: the tap sends the file under the list, as before. On: it
+                # opens the card, so the file can be managed in place.
+                callback_data=FileCB(
+                    action="view" if ctx.edit else "quick", file_id=file.id
+                ).pack(),
             )
         )
 
@@ -495,6 +509,11 @@ def file_list_kb(
                 callback_data=callback_data(ctx, "clear", page=1),
             )
         )
+
+    # The file lists keep the switch at the bottom, right above the menu row;
+    # the links screen has its own one at the top.
+    if ctx.view in ("search", "category"):
+        builder.row(_file_edit_button(ctx))
 
     builder.row(*nav_row())
     return builder.as_markup()

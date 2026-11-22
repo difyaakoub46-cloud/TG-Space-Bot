@@ -29,8 +29,9 @@ from tests.file_list_support import (
 
 from src.bot import file_list, navigation
 from src.bot.file_list import FileListCB, FileListContext
-from src.bot.keyboards import CategoryCB
+from src.bot.keyboards import CategoryCB, FileCB
 from src.bot.routers import browse
+from src.bot.routers import file_list as file_list_router
 from src.bot.routers import search as search_router
 from src.bot.states import SearchStates
 from src.db.models import Folder
@@ -61,17 +62,18 @@ async def test_the_list_shows_eight_files_and_the_date_on_top() -> None:
     assert "📅 Today: 2026-11-18" in text  # the date is the first line under it
     assert "20 files" in text
     assert "Page 1 of 3" in text
-    file_buttons = buttons(markup, "file:view:")
+    file_buttons = buttons(markup, "file:quick:")
     assert len(file_buttons) == FILES_PER_PAGE == 8
     # The filter row, eight files, the page row (only «Next»: there is nothing
-    # newer to go back to and no older day to jump to), the sort row, Back / Main.
-    assert [len(row) for row in markup.inline_keyboard] == [5] + [1] * 8 + [1, 1, 2]
+    # newer to go back to and no older day to jump to), the sort row, the edit
+    # switch, Back / Main.
+    assert [len(row) for row in markup.inline_keyboard] == [5] + [1] * 8 + [1, 1, 1, 2]
 
     _text, second = await navigation.build(
         SimpleNamespace(files=library), screen(f="day", p=2)
     )
-    assert set(buttons(markup, "file:view:")) & set(
-        buttons(second, "file:view:")
+    assert set(buttons(markup, "file:quick:")) & set(
+        buttons(second, "file:quick:")
     ) == set()
 
 
@@ -89,14 +91,14 @@ async def test_the_ordering_covers_the_whole_list_before_pagination() -> None:
 
     # The smallest file of the whole list is on page one, not the smallest of the
     # first eight rows the database happened to return.
-    assert buttons(markup, "file:view:")[0] == "file:view:id-0"
+    assert buttons(markup, "file:quick:")[0] == "file:quick:id-0"
     assert repository.calls[-1]["order"] == "file_size.asc"
     assert (repository.calls[-1]["limit"], repository.calls[-1]["offset"]) == (8, 0)
 
     _text, last = await navigation.build(
         SimpleNamespace(files=library), screen(srt="size_asc", p=2)
     )
-    assert buttons(last, "file:view:") == ["file:view:id-8", "file:view:id-9"]
+    assert buttons(last, "file:quick:") == ["file:quick:id-8", "file:quick:id-9"]
     assert repository.calls[-1]["offset"] == 8
 
 
@@ -109,18 +111,18 @@ async def test_the_period_filter_narrows_the_list() -> None:
         SimpleNamespace(files=library), screen(f="day")
     )
     assert "Today" in text
-    assert len(buttons(today_markup, "file:view:")) == 2
+    assert len(buttons(today_markup, "file:quick:")) == 2
 
     _text, week = await navigation.build(
         SimpleNamespace(files=library), screen(f="week")
     )
     # Today's two files and Monday's file are in this week; 15 November is not.
-    assert len(buttons(week, "file:view:")) == 3
+    assert len(buttons(week, "file:quick:")) == 3
 
     _text, all_time = await navigation.build(
         SimpleNamespace(files=library), screen(f="all")
     )
-    assert len(buttons(all_time, "file:view:")) == 4
+    assert len(buttons(all_time, "file:quick:")) == 4
 
 
 async def test_the_quick_jump_reaches_the_closest_older_day() -> None:
@@ -215,7 +217,7 @@ async def test_search_passes_its_query_and_the_category_passes_its_name() -> Non
     )
     assert "Search: «photo»" in search_text
     assert "1 file" in search_text and "1 folder" in search_text
-    assert len(buttons(search_kb, "file:view:")) == 1
+    assert len(buttons(search_kb, "file:quick:")) == 1
     assert repository.calls[-1]["query"] == "photo"
     assert repository.calls[-1]["category"] is None
     assert len(buttons(search_kb, "fld:open:")) == 1
@@ -225,7 +227,7 @@ async def test_search_passes_its_query_and_the_category_passes_its_name() -> Non
         SimpleNamespace(files=library), screen("category", "document")
     )
     assert "report.pdf" not in category_text  # files are buttons, not text
-    assert len(buttons(category_kb, "file:view:")) == 1
+    assert len(buttons(category_kb, "file:quick:")) == 1
     assert repository.calls[-1]["query"] is None
     assert repository.calls[-1]["category"] is FileCategory.document
     # Only search can be cleared: a category has no query to drop.
@@ -354,3 +356,153 @@ async def test_reopening_the_same_category_keeps_its_place(monkeypatch) -> None:
     assert captured["screen"]["srt"] == "size_desc"
     assert captured["screen"]["p"] == 2
     assert captured["push"] is False
+
+
+# --------------------------------------------------------------------------- #
+# «✏️ Edit»: red sends a tapped file at once, green opens its card
+# --------------------------------------------------------------------------- #
+def _buttons(markup):
+    return [button for row in markup.inline_keyboard for button in row]
+
+
+def _data(markup, prefix: str):
+    return [
+        button.callback_data
+        for button in _buttons(markup)
+        if button.callback_data and button.callback_data.startswith(prefix)
+    ]
+
+
+def _file_actions(markup) -> list[FileCB]:
+    return [FileCB.unpack(data) for data in _data(markup, "file:")]
+
+
+@pytest.mark.parametrize("view,value", [("search", ""), ("category", "document")])
+async def test_both_file_lists_have_the_edit_switch(view: str, value: str) -> None:
+    services = SimpleNamespace(files=service(documents(1)))
+
+    _text, markup = await file_list.screen(services, screen(view, value))
+
+    actions = [FileListCB.unpack(data) for data in _data(markup, "fl:")]
+    assert any(action.action == "edit" for action in actions)
+
+
+async def test_with_the_switch_off_a_file_tap_sends_it_at_once() -> None:
+    services = SimpleNamespace(files=service(documents(1)))
+
+    _text, markup = await file_list.screen(services, screen("search", ""))
+
+    assert [action.action for action in _file_actions(markup)] == ["quick"]
+
+
+async def test_with_the_switch_on_a_file_tap_opens_its_card() -> None:
+    services = SimpleNamespace(files=service(documents(1)))
+
+    _text, markup = await file_list.screen(
+        services, screen("category", "document", e=True)
+    )
+
+    assert [action.action for action in _file_actions(markup)] == ["view"]
+
+
+async def test_the_switch_flips_the_mode_and_keeps_the_place(monkeypatch) -> None:
+    key = screen("search", "", f="week", srt="name_asc", p=2)
+    data = file_list.callback_data(FileListContext.from_screen(key), "edit")
+
+    captured = await navigate(monkeypatch, file_list_router, data, key)
+
+    assert captured["screen"]["e"] is True
+    assert captured["screen"]["p"] == 2
+    assert captured["screen"]["f"] == "week"
+    assert captured["screen"]["srt"] == "name_asc"
+    assert captured["push"] is False
+
+
+class _QuickFiles:
+    """``get`` and ``deliver``, with what the tap asked them to do."""
+
+    def __init__(self, row, *, fail: Exception | None = None) -> None:
+        self.row = row
+        self.fail = fail
+        self.delivered: list[tuple[str, int]] = []
+
+    async def get(self, file_id: str):
+        return self.row
+
+    async def deliver(self, record, chat_id: int):
+        if self.fail is not None:
+            raise self.fail
+        self.delivered.append((record.id, chat_id))
+        return 555
+
+
+def _quick_callback(file_id: str = "id-1"):
+    return SimpleNamespace(
+        data=FileCB(action="quick", file_id=file_id).pack(),
+        from_user=SimpleNamespace(id=7),
+        message=SimpleNamespace(chat=SimpleNamespace(id=5)),
+    )
+
+
+async def _drive_quick(monkeypatch, files: _QuickFiles, state) -> dict:
+    captured: dict[str, object] = {}
+
+    async def fake_navigate(callback, state, bot, services, target, **kwargs):
+        captured["screen"] = dict(target)
+        captured["notice"] = kwargs.get("notice")
+        captured["push"] = kwargs.get("push", True)
+
+    monkeypatch.setattr(browse.navigation, "navigate_callback", fake_navigate)
+    await browse.file_quick_send_callback(
+        _quick_callback(),
+        services=SimpleNamespace(files=files),
+        state=state,
+        bot=None,
+    )
+    return captured
+
+
+async def test_a_tapped_file_is_delivered_and_the_list_stays(monkeypatch) -> None:
+    row = record(1, moment(TODAY, 12), name="a.pdf")
+    files = _QuickFiles(row)
+    state = State(screen("search", ""))
+
+    captured = await _drive_quick(monkeypatch, files, state)
+
+    assert files.delivered == [("id-1", 5)]
+    # The copy is tracked exactly as one sent from the card, so Back and the main
+    # menu keep cleaning it up through the existing logic.
+    assert 555 in state.data["cleanup_ids"]
+    assert 555 in state.data["delivered_ids"]
+    assert captured["screen"] == screen("search", "")
+    assert captured["push"] is False
+    assert "a.pdf" in str(captured["notice"])
+
+
+async def test_a_file_that_cannot_be_sent_is_reported_on_the_same_list(
+    monkeypatch,
+) -> None:
+    from aiogram.exceptions import TelegramAPIError
+
+    row = record(1, moment(TODAY, 12), name="a.pdf")
+    files = _QuickFiles(row, fail=TelegramAPIError(method=SimpleNamespace(), message="gone"))
+    alerts: list[tuple[object, dict]] = []
+
+    async def ack(callback, text=None, **kwargs) -> None:
+        alerts.append((text, kwargs))
+
+    async def navigate(*args, **kwargs) -> None:
+        raise AssertionError("a failed send must not redraw another screen")
+
+    monkeypatch.setattr(browse.views, "ack", ack)
+    monkeypatch.setattr(browse.navigation, "navigate_callback", navigate)
+
+    await browse.file_quick_send_callback(
+        _quick_callback(),
+        services=SimpleNamespace(files=files),
+        state=State(screen("search", "")),
+        bot=None,
+    )
+
+    assert alerts and alerts[0][1].get("show_alert") is True
+    assert "send" in str(alerts[0][0]).lower()
