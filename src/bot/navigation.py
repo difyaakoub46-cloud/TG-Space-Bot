@@ -37,6 +37,8 @@ from src.bot.keyboards import (
     groups_kb,
     help_kb,
     language_kb,
+    link_actions_kb,
+    link_delete_confirm_kb,
     main_menu_kb,
     pending_kb,
     permissions_kb,
@@ -159,6 +161,19 @@ async def build(
         if record is not None:
             folders = await services.files.file_folders(record.id)
             return views.file_text(record, folders), file_actions_kb(record.id)
+
+    if kind == "link":
+        record = record or await services.files.get(str(screen.get("id") or ""))
+        if record is not None:
+            return views.link_text(record), link_actions_kb(record.id)
+
+    if kind == "link_delete":
+        record = record or await services.files.get(str(screen.get("id") or ""))
+        if record is not None:
+            return (
+                views.link_deletion_text(record),
+                link_delete_confirm_kb(record.id),
+            )
 
     if kind == "folders":
         folders = await services.files.folders(int(screen.get("u") or 0))

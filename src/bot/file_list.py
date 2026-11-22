@@ -28,7 +28,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
-from src.bot.keyboards import FileCB, FolderCB, LinkNameCB, nav_row
+from src.bot.keyboards import FileCB, FolderCB, LinkCB, LinkNameCB, nav_row
 from src.bot.library_views import history_period_label
 from src.core.i18n import pick
 from src.db.models import Folder
@@ -86,6 +86,9 @@ class FileListContext:
     sort: str = "newest"
     page: int = 1
     anchor: date | None = None
+    # «✏️ Edit mode» of the links screen: the buttons open the actions instead of
+    # the links themselves. It lives in the screen key, so every redraw keeps it.
+    edit: bool = False
 
     @classmethod
     def from_screen(cls, screen: dict[str, object] | None) -> "FileListContext":
@@ -103,6 +106,7 @@ class FileListContext:
             sort=str(screen.get("srt") or "newest"),
             page=page,
             anchor=history_date(screen.get("d")),
+            edit=bool(screen.get("e")),
         )
 
     def to_screen(self, base: dict[str, object] | None = None) -> dict[str, object]:
@@ -119,6 +123,12 @@ class FileListContext:
                 "d": (self.anchor or history_date()).isoformat(),
             }
         )
+        # The flag is written only while it is on, so the key of a list that never
+        # entered the edit mode stays exactly what it always was.
+        if self.edit:
+            screen["e"] = True
+        else:
+            screen.pop("e", None)
         return screen
 
 
@@ -292,6 +302,16 @@ def _link_label(file) -> str:
     return f"{mark} {_fit_label(name)} - {file.created_at:%H:%M}"
 
 
+def _edit_button(ctx: FileListContext) -> InlineKeyboardButton:
+    """The one switch of the links screen, labelled with its current state."""
+    text = (
+        pick("✏️ Edit mode: on", "✏️ وضع التعديل: مفعّل")
+        if ctx.edit
+        else pick("✏️ Edit mode: off", "✏️ وضع التعديل: مغلق")
+    )
+    return InlineKeyboardButton(text=text, callback_data=callback_data(ctx, "edit"))
+
+
 def _section_buttons(ctx: FileListContext) -> list[InlineKeyboardButton]:
     """The two sections of the links screen, the one on screen marked ✅."""
     return [
@@ -409,11 +429,25 @@ def file_list_kb(
     builder.row(*_filter_buttons(ctx, page))
     if ctx.view == "links":
         builder.row(*_section_buttons(ctx))
+        builder.row(_edit_button(ctx))
 
     for file in page.files:
         if ctx.view == "links" and file.link_url:
-            # A tap opens the link itself; there is no card to open for a link.
-            builder.row(InlineKeyboardButton(text=_link_label(file), url=file.link_url))
+            label = _link_label(file)
+            if ctx.edit:
+                # With the mode on, a tap must land inside the bot: the button
+                # opens the link's actions instead of the address.
+                builder.row(
+                    InlineKeyboardButton(
+                        text=label,
+                        callback_data=LinkCB(
+                            action="open", link_id=file.id
+                        ).pack(),
+                    )
+                )
+            else:
+                # A tap opens the link itself; there is no card to open for a link.
+                builder.row(InlineKeyboardButton(text=label, url=file.link_url))
             continue
         builder.row(
             InlineKeyboardButton(

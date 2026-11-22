@@ -1091,6 +1091,75 @@ def file_sent_text(record: StoredFile) -> str:
     )
 
 
+def _link_section_label(record: StoredFile) -> str:
+    """The section a link belongs to, named the way the list names it."""
+    return links_section_label("telegram" if record.link_type == "telegram" else "global")
+
+
+def link_text(record: StoredFile) -> str:
+    """The card of one link: its name, its section, its address and its date."""
+    name = getattr(record, "link_display_name", None) or record.file_name
+    return "\n".join(
+        [
+            f"🔗 <b>{escape_text(name)}</b>",
+            "",
+            pick(
+                f"Section: {_link_section_label(record)}",
+                f"القسم: {_link_section_label(record)}",
+            ),
+            pick(
+                f"Address: <code>{escape_text(record.link_url or '')}</code>",
+                f"العنوان: <code>{escape_text(record.link_url or '')}</code>",
+            ),
+            pick(
+                f"Saved on: {escape_text(record.created_human)}",
+                f"تاريخ الحفظ: {escape_text(record.created_human)}",
+            ),
+            "",
+            pick("Pick an action below.", "اختر إجراءً من الأسفل."),
+        ]
+    )
+
+
+def link_rename_text(record: StoredFile) -> str:
+    name = getattr(record, "link_display_name", None) or record.file_name
+    return "\n".join(
+        [
+            pick("✏️ <b>Rename the link</b>", "✏️ <b>إعادة تسمية الرابط</b>"),
+            "",
+            pick(
+                f"Current name: {escape_text(name)}",
+                f"الاسم الحالي: {escape_text(name)}",
+            ),
+            "",
+            pick("Send the new name:", "أرسل الاسم الجديد كما تريده:"),
+        ]
+    )
+
+
+def link_deletion_text(record: StoredFile) -> str:
+    """Confirm the deletion: the row goes, and so does the group's copy."""
+    name = getattr(record, "link_display_name", None) or record.file_name
+    return "\n".join(
+        [
+            pick("🗑 <b>Delete the link</b>", "🗑 <b>حذف الرابط</b>"),
+            "",
+            pick(f"Name: {escape_text(name)}", f"الاسم: {escape_text(name)}"),
+            pick(
+                f"Address: <code>{escape_text(record.link_url or '')}</code>",
+                f"العنوان: <code>{escape_text(record.link_url or '')}</code>",
+            ),
+            "",
+            pick(
+                "It is deleted from the list and from the links group. "
+                "This cannot be undone.",
+                "سيُحذف من قائمة الروابط ومن مجموعة الروابط. "
+                "لا يمكن التراجع.",
+            ),
+        ]
+    )
+
+
 def deletion_text(record: StoredFile) -> str:
     return "\n".join(
         [

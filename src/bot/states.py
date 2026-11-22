@@ -20,3 +20,5 @@ class FolderStates(StatesGroup):
 class LinkStates(StatesGroup):
     # A lone global link was saved and the screen asks what to call it.
     waiting_name = State()
+    # A link's actions asked for a new name; the next message is that name.
+    renaming = State()

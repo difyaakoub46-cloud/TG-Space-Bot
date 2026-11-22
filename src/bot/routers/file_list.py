@@ -41,6 +41,7 @@ async def _context(
         sort=data.sort,
         page=max(1, data.page),
         anchor=anchor,
+        edit=stored.edit,
     )
 
 
@@ -77,6 +78,19 @@ async def file_list_callback(
             ctx.to_screen(base),
             notice=file_list.period_picker_text(ctx, periods),
             markup=file_list.period_picker_kb(ctx, periods),
+            push=False,
+        )
+        return
+
+    if data.action == "edit":
+        # The switch only flips the flag in the screen key: the list keeps its
+        # section, its period, its ordering and its page.
+        await navigation.navigate_callback(
+            callback,
+            state,
+            bot,
+            services,
+            replace(ctx, edit=not ctx.edit).to_screen(base),
             push=False,
         )
         return

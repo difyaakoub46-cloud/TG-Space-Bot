@@ -22,7 +22,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import file_list, navigation, views
-from src.bot.keyboards import LINKS_TEXTS, LinkNameCB, MenuCB, main_menu_kb
+from src.bot.keyboards import (
+    LINKS_TEXTS,
+    LinkCB,
+    LinkNameCB,
+    MenuCB,
+    main_menu_kb,
+)
 from src.bot.states import LinkStates
 from src.core.i18n import pick
 from src.db.models import StoredFile
@@ -273,6 +279,187 @@ async def link_name_skip(
     await _end_question(state)
     await navigation.navigate_callback(
         callback, state, bot, services, screen, push=False
+    )
+
+
+# --------------------------------------------------------------------------- #
+# A link's own screen: open it, rename it, delete it
+# --------------------------------------------------------------------------- #
+@router.callback_query(LinkCB.filter(F.action == "open"))
+async def link_open_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """«✏️ Edit mode» turned the button into this: the link's actions, not the link."""
+    data = LinkCB.unpack(callback.data)
+    record = await services.files.get(data.link_id)
+    if record is None:
+        await views.ack(
+            callback,
+            pick("The link no longer exists.", "الرابط غير موجود."),
+            show_alert=True,
+        )
+        return
+    stored = dict((await state.get_data()).get("screen_key") or {})
+    # The list is remembered so a deletion can return to the same page, and it is
+    # pushed once: coming back from the confirmation keeps the actions in place.
+    if stored.get("k") == "list":
+        await state.update_data(link_list_screen=stored)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "link", "id": record.id},
+        push=stored.get("k") != "link_delete",
+        record=record,
+    )
+
+
+@router.callback_query(LinkCB.filter(F.action == "rename"))
+async def link_rename_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Ask for the new name; the next text message is the answer."""
+    data = LinkCB.unpack(callback.data)
+    record = await services.files.get(data.link_id)
+    if record is None:
+        await views.ack(
+            callback,
+            pick("The link no longer exists.", "الرابط غير موجود."),
+            show_alert=True,
+        )
+        return
+    await state.set_state(LinkStates.renaming)
+    await state.update_data(link_rename_id=record.id)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "link", "id": record.id},
+        notice=views.link_rename_text(record),
+        push=False,
+        record=record,
+    )
+
+
+@router.message(LinkStates.renaming)
+async def link_rename_message(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    """The typed answer: the link takes it as its name, keeping its bot badge.
+
+    This handler is registered before the links filter, so a name that looks like
+    an address is stored as the name and never saved as a second link.
+    """
+    name = " ".join((message.text or "").split())
+    stored = await state.get_data()
+    link_id = str(stored.get("link_rename_id") or "")
+    user_id = int(message.from_user.id) if message.from_user else 0
+
+    if not name or len(name) > LINK_NAME_MAX:
+        await views.remember(state, message.message_id)
+        await message.answer(
+            pick(
+                "⚠️ Send a name between 1 and 120 characters.",
+                "⚠️ أرسل اسماً بين 1 و120 حرفاً.",
+            )
+        )
+        return
+
+    record = await services.files.get(link_id) if link_id else None
+    updated = (
+        await services.files.set_link_name(
+            link_id, name, bool(record and record.link_is_bot)
+        )
+        if link_id
+        else None
+    )
+    if updated is None:
+        await views.remember(state, message.message_id)
+        await message.answer(
+            pick(
+                "⚠️ Could not update the name, please try again.",
+                "⚠️ تعذّر تحديث الاسم، حاول مرة أخرى.",
+            )
+        )
+        return
+
+    await state.set_state(None)
+    await state.update_data(link_rename_id=None)
+    # The answer has been consumed: the chat keeps the screen, not the text.
+    await views.delete_screen_message(bot, message.chat.id, message.message_id)
+    await navigation.forget(state, message.message_id)
+
+    await navigation.navigate_message(
+        message,
+        state,
+        bot,
+        services,
+        {"k": "link", "id": link_id},
+        notice=pick(
+            f"✅ Saved as «{escape_text(updated.link_name or name)}».",
+            f"✅ تم الحفظ باسم «{escape_text(updated.link_name or name)}».",
+        ),
+    )
+
+
+@router.callback_query(LinkCB.filter(F.action == "delete"))
+async def link_delete_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Ask before deleting the row and the copy in the links group."""
+    data = LinkCB.unpack(callback.data)
+    record = await services.files.get(data.link_id)
+    if record is None:
+        await views.ack(
+            callback,
+            pick("The link no longer exists.", "الرابط غير موجود."),
+            show_alert=True,
+        )
+        return
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        {"k": "link_delete", "id": record.id},
+        push=False,
+        record=record,
+    )
+
+
+@router.callback_query(LinkCB.filter(F.action == "confirm"))
+async def link_delete_confirm_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Delete the row and its Telegram copy, then redraw the list it came from."""
+    data = LinkCB.unpack(callback.data)
+    deleted = await services.files.delete(data.link_id)
+    if not deleted:
+        await views.ack(
+            callback,
+            pick("Could not delete the link.", "تعذّر حذف الرابط."),
+            show_alert=True,
+        )
+        return
+    stored = await state.get_data()
+    target = dict(
+        stored.get("link_list_screen")
+        or file_list.new_screen("links", TELEGRAM, int(callback.from_user.id))
+    )
+    await state.update_data(link_list_screen=None)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        target,
+        notice=pick(
+            "✅ The link was removed from the list and from the links group.",
+            "✅ تم حذف الرابط من القائمة ومن مجموعة الروابط.",
+        ),
+        push=False,
     )
 
 

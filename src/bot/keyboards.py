@@ -176,6 +176,17 @@ class LinkNameCB(CallbackData, prefix="ln"):
     link_id: str = ""
 
 
+class LinkCB(CallbackData, prefix="lk"):
+    """A link's own buttons: open its actions, rename it, or delete it.
+
+    While «✏️ Edit mode» is on, the links of the list carry this callback instead
+    of a URL, so a tap opens the actions instead of leaving the chat.
+    """
+
+    action: str
+    link_id: str = ""
+
+
 class SortCB(CallbackData, prefix="srt"):
     """Sorting panel: menu / set a field and direction / close.
 
@@ -555,6 +566,39 @@ def saved_nav_kb(
             )
         )
     builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def link_actions_kb(link_id: str) -> InlineKeyboardMarkup:
+    """A link's actions: rename it or delete it, beside the shared back row."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("✏️ Rename", "✏️ إعادة تسمية"),
+            callback_data=LinkCB(action="rename", link_id=link_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=pick("🗑 Delete", "🗑 حذف"),
+            callback_data=LinkCB(action="delete", link_id=link_id).pack(),
+        ),
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def link_delete_confirm_kb(link_id: str) -> InlineKeyboardMarkup:
+    """Confirm deleting a link, with a way back to its own actions."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=pick("✅ Yes, delete", "✅ نعم، احذف"),
+            callback_data=LinkCB(action="confirm", link_id=link_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text=cancel_label(),
+            callback_data=LinkCB(action="open", link_id=link_id).pack(),
+        ),
+    )
     return builder.as_markup()
 
 
