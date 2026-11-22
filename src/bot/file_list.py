@@ -28,7 +28,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot import views
-from src.bot.keyboards import FileCB, FolderCB, nav_row
+from src.bot.keyboards import FileCB, FolderCB, LinkNameCB, nav_row
 from src.bot.library_views import history_period_label
 from src.core.i18n import pick
 from src.db.models import Folder
@@ -394,8 +394,14 @@ def file_list_kb(
     ctx: FileListContext,
     page: FileListPage,
     folders: Sequence[Folder] = (),
+    ask: str = "",
 ) -> InlineKeyboardMarkup:
-    """Filters, up to eight files, the page controls, sorting and the menu row."""
+    """Filters, up to eight files, the page controls, sorting and the menu row.
+
+    ``ask`` is the id of a link the screen is asking about: its two answers are
+    drawn under the link, inside the same keyboard, so the question never replaces
+    the list it belongs to.
+    """
     builder = InlineKeyboardBuilder()
 
     # The five period filters share one row on top of the list; the links screen
@@ -434,6 +440,19 @@ def file_list_kb(
             callback_data=callback_data(ctx, "sort"),
         )
     )
+
+    if ask:
+        # The naming question's answers, right under the link they are about.
+        builder.row(
+            InlineKeyboardButton(
+                text=pick("⏭️ Skip", "⏭️ تخطي"),
+                callback_data=LinkNameCB(action="skip", link_id=ask).pack(),
+            ),
+            InlineKeyboardButton(
+                text=pick("❌ Cancel", "❌ إلغاء"),
+                callback_data=LinkNameCB(action="cancel", link_id=ask).pack(),
+            ),
+        )
 
     if ctx.view == "search" and ctx.value:
         builder.row(
@@ -589,7 +608,7 @@ async def screen(services, screen: dict[str, object]) -> tuple[str, InlineKeyboa
     ctx = replace(ctx, page=page.page, period=page.span, sort=page.sort, anchor=page.anchor)
     return (
         file_list_text(ctx, page, folder_total),
-        file_list_kb(ctx, page, folders),
+        file_list_kb(ctx, page, folders, ask=str(screen.get("ask") or "")),
     )
 
 

@@ -22,9 +22,11 @@ from conftest import (
 )
 from file_list_support import TODAY, moment, record, screen, service
 from src.bot import file_list, views
-from src.bot.keyboards import main_menu_kb
+from src.bot.keyboards import LinkNameCB, main_menu_kb
 from src.bot.routers import links as links_router
+from src.bot.states import LinkStates
 from src.core.config import ConfigurationError
+from src.db.models import StoredFile
 from src.db.repository import SupabaseError
 from src.services.files import FileStorageServices, LinkSaveReport, NotABotError
 from src.services.links import LinkInfo
@@ -500,3 +502,245 @@ async def test_a_link_name_can_be_set_later(tmp_path) -> None:
     await services.set_link_name("7", "My Name", True)
 
     assert repository.renamed == [("7", "My Name", True)]
+
+
+# --------------------------------------------------------------------------- #
+# The naming question: asked once, for one fresh global link
+# --------------------------------------------------------------------------- #
+class _State:
+    """The parts of ``FSMContext`` the flow uses, kept in a dict."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, object] = {}
+        self.state: str | None = None
+
+    async def get_data(self) -> dict[str, object]:
+        return dict(self.data)
+
+    async def update_data(self, **fields: object) -> None:
+        self.data.update(fields)
+
+    async def set_state(self, value) -> None:
+        self.state = getattr(value, "state", value)
+
+    async def clear(self) -> None:
+        self.data.clear()
+        self.state = None
+
+
+class _NameFiles:
+    """``save_links`` and ``set_link_name``, recording what was asked."""
+
+    def __init__(self, report: LinkSaveReport, updated=None) -> None:
+        self.report = report
+        self.updated = updated
+        self.names: list[tuple[str, str]] = []
+
+    async def save_links(self, message, links):
+        return self.report
+
+    async def set_link_name(self, link_id, name, is_bot=False):
+        self.names.append((link_id, name))
+        return self.updated
+
+
+async def _run_links_message(
+    monkeypatch,
+    tmp_path,
+    report: LinkSaveReport,
+    *,
+    text: str = "https://example.com/x",
+    show_saved: bool = True,
+):
+    """Drive the links handler and hand back the screen it drew."""
+    bot, message = _DeleteBot(), _LinkMessage(text=text)
+    files = _NameFiles(report)
+    services = SimpleNamespace(
+        settings=make_settings(tmp_path, storage_chat_links=LINKS_GROUP),
+        files=files,
+        preferences=SimpleNamespace(show_saved_screen=lambda _user_id: show_saved),
+    )
+    state = _State()
+    captured: dict[str, object] = {}
+
+    async def navigate(*args, **kwargs) -> None:
+        captured["screen"] = dict(args[4])
+        captured["notice"] = kwargs.get("notice")
+        captured["push"] = kwargs.get("push", True)
+
+    monkeypatch.setattr(links_router.navigation, "navigate_message", navigate)
+    monkeypatch.setattr(links_router.navigation, "navigate_callback", navigate)
+
+    await links_router.save_links_message(message, services, state, bot)
+    return bot, message, state, files, services, captured
+
+
+def _saved_link(link_type: str = GLOBAL, index: int = 1) -> StoredFile:
+    url = "https://example.com/x" if link_type == GLOBAL else "https://t.me/abc"
+    return _link_row(index, url, link_type)
+
+
+async def test_one_new_global_link_asks_for_its_name(monkeypatch, tmp_path) -> None:
+    report = LinkSaveReport()
+    report.saved.append(_saved_link())
+
+    _bot, _message, state, _files, _services, captured = await _run_links_message(
+        monkeypatch, tmp_path, report
+    )
+
+    assert state.state == LinkStates.waiting_name.state
+    assert state.data["link_id"] == "id-1"
+    assert captured["screen"]["ask"] == "id-1"
+    assert "name?" in str(captured["notice"])
+
+
+async def test_a_telegram_link_is_never_asked_about(monkeypatch, tmp_path) -> None:
+    report = LinkSaveReport()
+    report.saved.append(_saved_link(TELEGRAM))
+
+    _bot, _message, state, _files, _services, captured = await _run_links_message(
+        monkeypatch, tmp_path, report, text="https://t.me/abc"
+    )
+
+    assert state.state is None
+    assert "ask" not in captured["screen"]
+
+
+async def test_a_message_with_two_links_is_not_asked_about(monkeypatch, tmp_path) -> None:
+    report = LinkSaveReport()
+    report.saved.extend([_saved_link(GLOBAL, 1), _saved_link(GLOBAL, 2)])
+
+    _bot, _message, state, _files, _services, captured = await _run_links_message(
+        monkeypatch,
+        tmp_path,
+        report,
+        text="https://example.com/x and https://example.com/y",
+    )
+
+    assert state.state is None
+    assert "ask" not in captured["screen"]
+
+
+async def test_a_duplicate_link_is_not_asked_about(monkeypatch, tmp_path) -> None:
+    report = LinkSaveReport()
+    report.duplicates.append(_saved_link())
+
+    _bot, _message, state, _files, _services, captured = await _run_links_message(
+        monkeypatch, tmp_path, report
+    )
+
+    assert state.state is None
+    assert "ask" not in captured["screen"]
+
+
+async def test_the_question_is_skipped_while_the_saved_screen_is_off(
+    monkeypatch, tmp_path
+) -> None:
+    report = LinkSaveReport()
+    report.saved.append(_saved_link())
+
+    _bot, _message, state, _files, _services, captured = await _run_links_message(
+        monkeypatch, tmp_path, report, show_saved=False
+    )
+
+    assert state.state is None
+    assert captured == {}
+
+
+async def _ready_to_name(monkeypatch, tmp_path, **kwargs):
+    """The state of a screen that is already asking for a name."""
+    report = LinkSaveReport()
+    report.saved.append(_saved_link())
+    bot, _message, state, files, services, captured = await _run_links_message(
+        monkeypatch, tmp_path, report, **kwargs
+    )
+    files.updated = dataclasses.replace(_saved_link(), link_name="موقعي")
+    return bot, state, files, services, captured
+
+
+async def test_the_typed_name_is_stored_and_its_message_removed(
+    monkeypatch, tmp_path
+) -> None:
+    bot, state, files, services, captured = await _ready_to_name(monkeypatch, tmp_path)
+    answer = _LinkMessage(message_id=44, text="موقعي")
+    deleted: list[int] = []
+
+    async def delete_screen_message(bot, chat_id: int, message_id: int) -> None:
+        deleted.append(message_id)
+
+    monkeypatch.setattr(
+        links_router.views, "delete_screen_message", delete_screen_message
+    )
+    await links_router.link_name_message(answer, services, state, bot)
+
+    assert files.names == [("id-1", "موقعي")]
+    assert deleted == [44]
+    assert state.state is None
+    assert "موقعي" in str(captured["notice"])
+    assert "ask" not in captured["screen"]
+
+
+async def test_a_link_typed_as_the_name_stays_a_name(monkeypatch, tmp_path) -> None:
+    bot, state, files, services, _captured = await _ready_to_name(monkeypatch, tmp_path)
+    answer = _LinkMessage(message_id=45, text="https://example.com/pretty")
+
+    async def ignore(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(links_router.views, "delete_screen_message", ignore)
+    await links_router.link_name_message(answer, services, state, bot)
+
+    # The name is stored as typed; no second link was extracted from it.
+    assert files.names == [("id-1", "https://example.com/pretty")]
+    assert files.report.saved == [_saved_link()]
+
+
+async def test_a_too_long_name_is_refused_and_the_question_stays(
+    monkeypatch, tmp_path
+) -> None:
+    bot, state, files, services, _captured = await _ready_to_name(monkeypatch, tmp_path)
+    answer = _LinkMessage(message_id=46, text="x" * 121)
+
+    await links_router.link_name_message(answer, services, state, bot)
+
+    assert files.names == []
+    assert state.state == LinkStates.waiting_name.state
+    assert answer.answers  # the user was told the length is wrong
+
+
+async def test_skipping_clears_the_state_and_the_question(monkeypatch, tmp_path) -> None:
+    _bot, state, _files, services, captured = await _ready_to_name(
+        monkeypatch, tmp_path
+    )
+    callback = SimpleNamespace(
+        data="ln:skip:id-1",
+        from_user=SimpleNamespace(id=7),
+        message=SimpleNamespace(chat=SimpleNamespace(id=5)),
+    )
+
+    await links_router.link_name_skip(callback, services, state, SimpleNamespace())
+
+    assert state.state is None
+    assert "ask" not in captured["screen"]
+    assert captured["push"] is False
+
+
+async def test_the_question_buttons_are_on_the_links_screen() -> None:
+    services = SimpleNamespace(
+        files=service([_link_row(1, "https://example.com/x", GLOBAL)])
+    )
+    key = screen("links", "telegram")
+    key["ask"] = "id-1"
+
+    _text, markup = await file_list.screen(services, key)
+
+    answers = [
+        LinkNameCB.unpack(button.callback_data)
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data and button.callback_data.startswith("ln:")
+    ]
+    assert {(answer.action, answer.link_id) for answer in answers} == {
+        ("skip", "id-1"),
+        ("cancel", "id-1"),
+    }

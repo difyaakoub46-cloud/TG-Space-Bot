@@ -15,3 +15,8 @@ class RenameStates(StatesGroup):
 
 class FolderStates(StatesGroup):
     waiting_name = State()
+
+
+class LinkStates(StatesGroup):
+    # A lone global link was saved and the screen asks what to call it.
+    waiting_name = State()

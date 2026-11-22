@@ -22,15 +22,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot import file_list, navigation, views
-from src.bot.keyboards import LINKS_TEXTS, MenuCB, main_menu_kb
+from src.bot.keyboards import LINKS_TEXTS, LinkNameCB, MenuCB, main_menu_kb
+from src.bot.states import LinkStates
 from src.core.i18n import pick
+from src.db.models import StoredFile
 from src.services.container import Services
 from src.services.files import LinkSaveReport
 from src.utils.formatters import escape_text
-from src.utils.links import TELEGRAM, extract_links
+from src.utils.links import GLOBAL, TELEGRAM, Link, extract_links
 from src.utils.telegram import safe_delete_messages
 
 router = Router(name="links")
+
+# A link's name is as short as a file's: one line, never an essay.
+LINK_NAME_MAX = 120
 
 
 class HasLinks(Filter):
@@ -157,6 +162,121 @@ async def menu_links_callback(
 
 
 # --------------------------------------------------------------------------- #
+# Naming the link that was just saved
+# --------------------------------------------------------------------------- #
+def _name_question() -> str:
+    """The one question the screen asks about a fresh global link."""
+    return pick(
+        "❓ Give this link a name? Send it, or press ⏭️ Skip.",
+        "❓ هل تريد إعطاء هذا الرابط اسماً؟ أرسل الاسم أو اضغط ⏭️ تخطي.",
+    )
+
+
+def _askable(links: list[Link], report: LinkSaveReport) -> StoredFile | None:
+    """The one link worth asking a name for, if the message has exactly one.
+
+    Telegram links bring their own name, a repeat is already on record, and a
+    message with several links has no single name to ask about, so none of them
+    opens the question: it is reserved for one freshly saved global link.
+    """
+    if len(links) != 1 or links[0].link_type != GLOBAL:
+        return None
+    if len(report.saved) != 1:
+        return None
+    if report.duplicates or report.failures or report.rejected:
+        return None
+    return report.saved[0]
+
+
+async def _screen_of(state: FSMContext, user_id: int) -> dict[str, object]:
+    """The links screen the question was drawn on, without the question."""
+    stored = await state.get_data()
+    screen = dict(
+        stored.get("link_screen")
+        or file_list.new_screen("links", TELEGRAM, user_id)
+    )
+    screen.pop("ask", None)
+    return screen
+
+
+async def _end_question(state: FSMContext) -> None:
+    """Forget the question: the link keeps the name it already has."""
+    await state.set_state(None)
+    await state.update_data(link_id=None, link_screen=None)
+
+
+@router.message(LinkStates.waiting_name)
+async def link_name_message(
+    message: Message, services: Services, state: FSMContext, bot
+) -> None:
+    """The typed answer: the link takes it as its name, links included.
+
+    This handler is registered before the links filter, so a name that looks like
+    an address is stored as the name and never saved as a second link.
+    """
+    name = " ".join((message.text or "").split())
+    stored = await state.get_data()
+    link_id = str(stored.get("link_id") or "")
+    user_id = int(message.from_user.id) if message.from_user else 0
+
+    if not name or len(name) > LINK_NAME_MAX:
+        await views.remember(state, message.message_id)
+        await message.answer(
+            pick(
+                "⚠️ Send a name between 1 and 120 characters.",
+                "⚠️ أرسل اسماً بين 1 و120 حرفاً.",
+            )
+        )
+        return
+
+    updated = await services.files.set_link_name(link_id, name) if link_id else None
+    if updated is None:
+        await views.remember(state, message.message_id)
+        await message.answer(
+            pick(
+                "⚠️ Could not update the name, please try again.",
+                "⚠️ تعذّر تحديث الاسم، حاول مرة أخرى.",
+            )
+        )
+        return
+
+    screen = await _screen_of(state, user_id)
+    await _end_question(state)
+    # The answer has been consumed: the chat keeps the screen, not the text.
+    await views.delete_screen_message(bot, message.chat.id, message.message_id)
+    await navigation.forget(state, message.message_id)
+
+    await navigation.navigate_message(
+        message,
+        state,
+        bot,
+        services,
+        screen,
+        notice=pick(
+            f"✅ Saved as «{escape_text(updated.link_name or name)}».",
+            f"✅ تم الحفظ باسم «{escape_text(updated.link_name or name)}».",
+        ),
+    )
+
+
+@router.callback_query(LinkNameCB.filter(F.action.in_({"skip", "cancel"})))
+async def link_name_skip(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """«⏭️ Skip» and «❌ Cancel»: the derived name stays, the question goes.
+
+    The question is drawn on the persistent screen, so it is removed by redrawing
+    that screen without it — deleting the message would leave the chat without
+    the list the link was saved into.
+    """
+    screen = await _screen_of(state, int(callback.from_user.id))
+    await _end_question(state)
+    await navigation.navigate_callback(
+        callback, state, bot, services, screen, push=False
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Saving the links of a message
 # --------------------------------------------------------------------------- #
 @router.message(F.chat.type == ChatType.PRIVATE, HasLinks())
@@ -197,17 +317,29 @@ async def save_links_message(
         await safe_delete_messages(bot, message.chat.id, [message.message_id])
 
     user_id = int(message.from_user.id) if message.from_user else 0
-    if not kept_message and not services.preferences.show_saved_screen(user_id):
+    show_saved = services.preferences.show_saved_screen(user_id)
+    if not kept_message and not show_saved:
         return
 
     # The result is drawn on the single persistent screen, never as a new message
     # with its own main-menu keyboard: that would leave one more menu box behind
     # on every link and fill the chat with duplicates.
+    screen = file_list.new_screen("links", TELEGRAM, user_id)
+    notice = saved_text(report)
+    target = _askable(links, report) if show_saved else None
+    if target is not None:
+        # One fresh global link: the screen asks for its name, and the state waits
+        # for the answer the question's own buttons or the text can give.
+        screen["ask"] = target.id
+        notice = f"{notice}\n\n{_name_question()}"
+        await state.set_state(LinkStates.waiting_name)
+        await state.update_data(link_id=target.id, link_screen=screen)
+
     await navigation.navigate_message(
         message,
         state,
         bot,
         services,
-        file_list.new_screen("links", TELEGRAM, user_id),
-        notice=saved_text(report),
+        screen,
+        notice=notice,
     )

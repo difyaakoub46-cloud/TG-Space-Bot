@@ -164,6 +164,18 @@ class SavedCB(CallbackData, prefix="svd"):
     value: str = ""
 
 
+class LinkNameCB(CallbackData, prefix="ln"):
+    """The two answers of the naming question: skip it, or cancel it.
+
+    Both keep the name Telegram derived (a global link's domain): skipping only
+    ends the question, and cancelling is the same gesture worded differently for
+    the user who does not want to name the link at all.
+    """
+
+    action: str
+    link_id: str = ""
+
+
 class SortCB(CallbackData, prefix="srt"):
     """Sorting panel: menu / set a field and direction / close.
 
