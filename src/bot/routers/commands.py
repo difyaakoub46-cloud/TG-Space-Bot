@@ -95,6 +95,22 @@ async def menu_settings_callback(
     )
 
 
+def _preferences_screen(callback: CallbackQuery) -> dict[str, object]:
+    """The key of the display-preferences screen of the user who tapped."""
+    return {"k": "preferences", "u": int(callback.from_user.id)}
+
+
+@router.callback_query(MenuCB.filter(F.action == "preferences"))
+async def menu_preferences_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Open the display preferences, one level under Settings."""
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback, state, bot, services, _preferences_screen(callback)
+    )
+
+
 @router.callback_query(MenuCB.filter(F.action == "toggle_saved"))
 async def menu_toggle_saved_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
@@ -109,7 +125,7 @@ async def menu_toggle_saved_callback(
         state,
         bot,
         services,
-        {"k": "settings", "u": user_id},
+        _preferences_screen(callback),
         notice=library_views.saved_screen_changed_text(show),
         push=False,
     )
@@ -129,8 +145,28 @@ async def menu_toggle_keep_sent_callback(
         state,
         bot,
         services,
-        {"k": "settings", "u": user_id},
+        _preferences_screen(callback),
         notice=library_views.keep_sent_changed_text(keep),
+        push=False,
+    )
+
+
+@router.callback_query(MenuCB.filter(F.action == "toggle_single_view"))
+async def menu_toggle_single_view_callback(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """Show one file at a time: a new tap replaces the previous copy."""
+    user_id = int(callback.from_user.id)
+    enabled = services.preferences.single_file_view(user_id)
+    enabled = await services.preferences.set_single_file_view(user_id, not enabled)
+    await views.reset_flow(state)
+    await navigation.navigate_callback(
+        callback,
+        state,
+        bot,
+        services,
+        _preferences_screen(callback),
+        notice=library_views.single_view_changed_text(enabled),
         push=False,
     )
 

@@ -43,6 +43,7 @@ from src.bot.keyboards import (
     pending_kb,
     permissions_kb,
     pick_folder_kb,
+    preferences_kb,
     saved_nav_kb,
     settings_kb,
     status_kb,
@@ -227,14 +228,21 @@ async def build(
         return views.new_folder_text(), back_to_menu_kb()
 
     if kind == "settings":
+        return views.settings_text(), settings_kb()
+
+    if kind == "preferences":
+        # The display settings of the screens live one level down from Settings,
+        # so the main screen stays the short list of the language and the links.
         user_id = int(screen.get("u") or 0) or None
         show_saved = services.preferences.show_saved_screen(user_id)
         keep_sent = services.preferences.keep_sent_files(user_id)
+        single_view = services.preferences.single_file_view(user_id)
         return (
-            views.settings_text()
+            library_views.preferences_text()
             + library_views.saved_screen_settings_text(show_saved)
-            + library_views.keep_sent_settings_text(keep_sent),
-            settings_kb(show_saved, keep_sent),
+            + library_views.keep_sent_settings_text(keep_sent)
+            + library_views.single_view_settings_text(single_view),
+            preferences_kb(show_saved, keep_sent, single_view),
         )
 
     if kind == "saved":
@@ -305,6 +313,20 @@ async def build(
     # The main menu (and any screen that no longer exists) counts the library.
     stats = await services.files.stats()
     return views.welcome_text(int(stats.get("total", 0))), main_menu_kb()
+
+
+async def _forget_last_sent(
+    state: FSMContext, screen: dict[str, object]
+) -> None:
+    """Drop the «single file view» pointer once the chat is back at the menu.
+
+    The main menu already wipes everything, so the file the setting would have
+    replaced is gone; keeping its id would only make the next tap try to delete
+    a message that no longer exists. Nothing else in the cleanup is touched.
+    """
+    if screen.get("k") != MAIN.get("k"):
+        return
+    await state.update_data(last_sent_message_id=None)
 
 
 async def _push_current(state: FSMContext) -> None:
@@ -380,6 +402,7 @@ async def navigate_message(
         await _push_current(state)
     text, keyboard = await _render(services, screen, notice, markup, record)
     await state.update_data(screen_key=dict(screen))
+    await _forget_last_sent(state, screen)
     await _sync_typing(state, screen)
     await views.set_screen(bot, message, state, text, keyboard)
 
@@ -400,6 +423,7 @@ async def navigate_callback(
         await _push_current(state)
     text, keyboard = await _render(services, screen, notice, markup, record)
     await state.update_data(screen_key=dict(screen))
+    await _forget_last_sent(state, screen)
     await _sync_typing(state, screen)
     await views.set_screen_cb(callback, state, text, keyboard)
 

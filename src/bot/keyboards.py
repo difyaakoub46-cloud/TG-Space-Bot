@@ -8,7 +8,8 @@ The menu hierarchy is:
 
 and each of the two sub-screens groups its own actions:
 
-* Settings → 🌐 Change language, 🔗 Join the groups, ❓ Help
+* Settings → 🌐 Change language, ⚙️ Preferences, 🔗 Join the groups, ❓ Help
+* Preferences → 📨 Saved-file screen, 🗂 Keep the opened files, 📄 Single file view
 * General status → 🔍 Check and update status, 📊 Statistics,
   🛡 Group permissions, 🛟 Reserve and pending files
 
@@ -80,6 +81,10 @@ def pending_label() -> str:
 
 def language_label() -> str:
     return pick("🌐 Change language", "🌐 تغيير اللغة")
+
+
+def preferences_label() -> str:
+    return pick("⚙️ Preferences", "⚙️ التفضيلات")
 
 
 def join_label() -> str:
@@ -257,36 +262,18 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def saved_screen_label(show: bool = True) -> str:
-    """The saved-file card toggle, with its current state on the button."""
-    state = pick("✅ On", "✅ مفعّلة") if show else pick("⛔ Off", "⛔ معطّلة")
-    return pick(
-        f"📨 Saved-file screen: {state}",
-        f"📨 شاشة «تم حفظ الملف»: {state}",
-    )
-
-
-def settings_kb(
-    show_saved: bool = True, keep_sent: bool = False
-) -> InlineKeyboardMarkup:
-    """Settings: language, both screen toggles, the group gate and help."""
+def settings_kb() -> InlineKeyboardMarkup:
+    """Settings: language, the display preferences, the group gate and help."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
             text=language_label(), callback_data=MenuCB(action="language").pack()
         )
     )
-    # The two toggles and the two links share a row each: five actions used to
-    # cost five rows, which made the panel taller than the text above it.
     builder.row(
         InlineKeyboardButton(
-            text=saved_screen_label(show_saved),
-            callback_data=MenuCB(action="toggle_saved").pack(),
-        ),
-        InlineKeyboardButton(
-            text=library_views.keep_sent_label(keep_sent),
-            callback_data=MenuCB(action="toggle_keep_sent").pack(),
-        ),
+            text=preferences_label(), callback_data=MenuCB(action="preferences").pack()
+        )
     )
     builder.row(
         InlineKeyboardButton(
@@ -295,6 +282,35 @@ def settings_kb(
         InlineKeyboardButton(
             text=help_label(), callback_data=MenuCB(action="help").pack()
         ),
+    )
+    builder.row(*nav_row())
+    return builder.as_markup()
+
+
+def preferences_kb(
+    show_saved: bool = True,
+    keep_sent: bool = False,
+    single_view: bool = False,
+) -> InlineKeyboardMarkup:
+    """Preferences: the two screen toggles, then «single file view» on its own row."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=library_views.saved_screen_label(show_saved),
+            callback_data=MenuCB(action="toggle_saved").pack(),
+        ),
+        InlineKeyboardButton(
+            text=library_views.keep_sent_label(keep_sent),
+            callback_data=MenuCB(action="toggle_keep_sent").pack(),
+        ),
+    )
+    # Its own row: the label is long, and the setting decides what a tap leaves
+    # behind, so it stays apart from the two toggles of the screens.
+    builder.row(
+        InlineKeyboardButton(
+            text=library_views.single_view_label(single_view),
+            callback_data=MenuCB(action="toggle_single_view").pack(),
+        )
     )
     builder.row(*nav_row())
     return builder.as_markup()

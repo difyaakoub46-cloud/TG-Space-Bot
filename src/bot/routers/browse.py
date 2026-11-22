@@ -115,6 +115,33 @@ async def category_callback(
     )
 
 
+async def _replace_previous_send(
+    callback: CallbackQuery, services: Services, state: FSMContext, bot
+) -> None:
+    """«📄 Single file view»: remove the copy the previous tap left behind.
+
+    Only the id the bot itself delivered last is remembered, so a file the user
+    sent to the chat is never touched. The setting is looked up on every tap, and
+    with it off this does nothing at all: ``cleanup_ids``, ``delivered_ids`` and
+    the back/menu logic keep working exactly as before. Deleting a message that
+    is already gone is left to fail silently, as ``delete_screen_message`` does.
+    """
+    user_id = int(callback.from_user.id) if callback.from_user is not None else None
+    if not services.preferences.single_file_view(user_id):
+        return
+    previous = (await state.get_data()).get("last_sent_message_id")
+    if not previous:
+        return
+    await views.delete_screen_message(bot, callback.message.chat.id, int(previous))
+
+
+async def _track_copy(state: FSMContext, message_id: int) -> None:
+    """Track a delivered copy like the card does, and make it the one to replace."""
+    await views.remember(state, message_id)
+    await navigation.track_delivered(state, message_id)
+    await state.update_data(last_sent_message_id=message_id)
+
+
 @router.callback_query(FileCB.filter(F.action == "quick"))
 async def file_quick_send_callback(
     callback: CallbackQuery, services: Services, state: FSMContext, bot
@@ -145,10 +172,11 @@ async def file_quick_send_callback(
         )
         return
 
-    # The copy is tracked exactly like one sent from the card, so the existing
-    # cleanup keeps working untouched.
-    await views.remember(state, delivered_id)
-    await navigation.track_delivered(state, delivered_id)
+    # Only after the new copy is safely in the chat: the previous one is removed
+    # when «single file view» asks for it, then the new id becomes the one to
+    # replace next time. The tracked lists stay untouched.
+    await _replace_previous_send(callback, services, state, bot)
+    await _track_copy(state, delivered_id)
     current = dict((await state.get_data()).get("screen_key") or {})
     if current.get("k") != "list":
         current = file_list.new_screen("search", "", int(callback.from_user.id))
@@ -204,10 +232,10 @@ async def file_send_callback(
         )
         return
 
-    # The delivered copy is a real message in the chat: track it so the main menu
-    # removes it too, and so «↩️ Back» can remove it when its setting says so.
-    await views.remember(state, delivered_id)
-    await navigation.track_delivered(state, delivered_id)
+    # Same order as the quick send: the previous copy is replaced first, then the
+    # new one is remembered for the next tap and for the existing cleanup.
+    await _replace_previous_send(callback, services, state, bot)
+    await _track_copy(state, delivered_id)
     await navigation.navigate_callback(
         callback,
         state,

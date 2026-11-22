@@ -118,6 +118,15 @@ def saved_screen_changed_text(show: bool) -> str:
     )
 
 
+def saved_screen_label(show: bool = True) -> str:
+    """The saved-file card toggle, with its current state on the button."""
+    state = pick("✅ On", "✅ مفعّلة") if show else pick("⛔ Off", "⛔ معطّلة")
+    return pick(
+        f"📨 Saved-file screen: {state}",
+        f"📨 شاشة «تم حفظ الملف»: {state}",
+    )
+
+
 def keep_sent_label(keep: bool = False) -> str:
     """The «keep the opened files» toggle, with its current state on the button."""
     state = pick("✅ On", "✅ مفعّل") if keep else pick("⛔ Off", "⛔ معطّل")
@@ -155,6 +164,60 @@ def keep_sent_changed_text(keep: bool) -> str:
         "soon as you go back. The main menu still clears everything.",
         "⛔ الملفات المفتوحة تُمسح بزر «↩️ الرجوع»: تختفي المعاينة من المحادثة "
         "بمجرد الرجوع، ويبقى زر القائمة الرئيسية يمسح كل شيء.",
+    )
+
+
+def preferences_text() -> str:
+    """The header of «⚙️ Preferences», the display settings of the screens."""
+    return "\n".join(
+        [
+            pick("⚙️ <b>Preferences</b>", "⚙️ <b>التفضيلات</b>"),
+            pick(
+                "How the screens behave and what the files they open leave in the chat.",
+                "كيف تتصرف الشاشات وما تتركه الملفات التي تفتحها في المحادثة.",
+            ),
+        ]
+    )
+
+
+def single_view_label(enabled: bool = False) -> str:
+    """The «one file at a time» toggle, with its current state on the button."""
+    state = pick("✅ On", "✅ مفعّل") if enabled else pick("⛔ Off", "⛔ معطّل")
+    return pick(
+        f"📄 Single file view: {state}",
+        f"📄 عرض ملف واحد: {state}",
+    )
+
+
+def single_view_settings_text(enabled: bool = False) -> str:
+    """The settings block of the «single file view» toggle."""
+    state = pick("✅ On", "✅ مفعّل") if enabled else pick("⛔ Off", "⛔ معطّل")
+    return "\n".join(
+        [
+            "",
+            pick(
+                f"📄 Single file view: <b>{state}</b> — a new file replaces the one the bot sent before it.",
+                f"📄 عرض ملف واحد: <b>{state}</b> — الملف الجديد يحل محل الملف الذي أرسله البوت قبله.",
+            ),
+        ]
+    )
+
+
+def single_view_changed_text(enabled: bool) -> str:
+    """The confirmation after flipping the «single file view» setting."""
+    if enabled:
+        return pick(
+            "✅ Single file view is on: opening a file removes the previous file the "
+            "bot sent, so only the newest one stays in the chat. «↩️ Back» and the "
+            "main menu keep working exactly as before.",
+            "✅ عرض ملف واحد مفعّل: فتح ملف يحذف الملف السابق الذي أرسله البوت، فيبقى "
+            "الأحدث فقط في المحادثة. «↩️ الرجوع» والقائمة الرئيسية يعملان كما هما.",
+        )
+    return pick(
+        "⛔ Single file view is off: every opened file stays in the chat until "
+        "«↩️ Back» or the main menu clears it.",
+        "⛔ عرض ملف واحد معطّل: يبقى كل ملف مفتوح في المحادثة إلى أن يمسحه "
+        "«↩️ الرجوع» أو القائمة الرئيسية.",
     )
 
 

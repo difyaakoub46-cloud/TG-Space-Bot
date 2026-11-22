@@ -455,7 +455,12 @@ async def _drive_quick(monkeypatch, files: _QuickFiles, state) -> dict:
     monkeypatch.setattr(browse.navigation, "navigate_callback", fake_navigate)
     await browse.file_quick_send_callback(
         _quick_callback(),
-        services=SimpleNamespace(files=files),
+        # «Single file view» is off here: the tap only delivers and tracks, which
+        # is what this module covers; replacing a copy has its own test module.
+        services=SimpleNamespace(
+            files=files,
+            preferences=SimpleNamespace(single_file_view=lambda _user_id: False),
+        ),
         state=state,
         bot=None,
     )

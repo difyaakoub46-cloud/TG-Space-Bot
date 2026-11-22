@@ -254,6 +254,10 @@ async def reset_flow(state: FSMContext, *, keep_nav: bool = True) -> None:
         # must survive the resets of the flows in between; the main menu drops it
         # with ``keep_nav=False`` and wipes the copy through ``cleanup_ids``.
         kept["delivered_ids"] = data.get("delivered_ids")
+        # «📄 Single file view» removes the last copy itself, so its pointer has
+        # to outlive the resets too: opening Settings between two files must not
+        # lose the file waiting to be replaced.
+        kept["last_sent_message_id"] = data.get("last_sent_message_id")
     await state.clear()
     await state.update_data(**{name: value for name, value in kept.items() if value})
 
@@ -392,6 +396,10 @@ def settings_text() -> str:
         [
             pick("⚙️ <b>Settings</b>", "⚙️ <b>الإعدادات</b>"),
             pick(f"🌐 Language: <b>{current}</b>", f"🌐 اللغة: <b>{current}</b>"),
+            pick(
+                "⚙️ Preferences — the screens and the files they open",
+                "⚙️ التفضيلات — الشاشات والملفات التي تفتحها",
+            ),
             pick(
                 "🔗 Join the groups — owner only",
                 "🔗 الانضمام إلى المجموعات — للمالك فقط",

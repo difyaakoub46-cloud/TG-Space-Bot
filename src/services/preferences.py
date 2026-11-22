@@ -1,9 +1,9 @@
-"""Per-user preferences: the interface language and the saved-file screen.
+"""Per-user preferences: the interface language and how the screens behave.
 
 Telegram hands the bot no place to keep a setting, and the FSM storage is in
-memory (so a restart would forget it). The language of each user, and whether an
-upload ends with the «✅ The file was saved» card, therefore live in a tiny JSON
-file next to the emergency registry, written atomically.
+memory (so a restart would forget it). The language of each user, and the three
+display choices of «⚙️ Preferences», therefore live in a tiny JSON file next to
+the emergency registry, written atomically.
 
 English is the default and the saved-file card is shown by default: a user who
 never opened «Settings» sees English and the usual result screen, and a missing or
@@ -22,6 +22,21 @@ from src.core.i18n import DEFAULT_LANGUAGE, Language, parse_language
 logger = logging.getLogger(__name__)
 
 
+def _read_flags(raw: dict[str, object], key: str, target: dict[int, bool]) -> None:
+    """Read one of the on/off maps; only a real JSON boolean is accepted."""
+    rows = raw.get(key)
+    if not isinstance(rows, dict):
+        return
+    for user_key, value in rows.items():
+        if isinstance(value, bool):
+            try:
+                target[int(user_key)] = value
+                continue
+            except (TypeError, ValueError):
+                pass
+        logger.warning("Skipped an invalid %s entry: %r", key, user_key)
+
+
 class UserPreferences:
     """The persisted language and screen choices of each Telegram user."""
 
@@ -32,6 +47,8 @@ class UserPreferences:
         self._saved_screen: dict[int, bool] = {}
         # True only when opened files must survive «↩️ Back» until the main menu.
         self._keep_sent: dict[int, bool] = {}
+        # True only when a new file replaces the previous one in the chat.
+        self._single_view: dict[int, bool] = {}
 
     @property
     def path(self) -> Path:
@@ -50,7 +67,9 @@ class UserPreferences:
                 exc_info=True,
             )
             return
-        rows = raw.get("languages") if isinstance(raw, dict) else None
+        if not isinstance(raw, dict):
+            return
+        rows = raw.get("languages")
         if isinstance(rows, dict):
             for key, value in rows.items():
                 try:
@@ -58,28 +77,9 @@ class UserPreferences:
                 except (TypeError, ValueError):
                     logger.warning("Skipped an invalid language entry: %r", key)
 
-        screens = raw.get("saved_screen") if isinstance(raw, dict) else None
-        if isinstance(screens, dict):
-            for key, value in screens.items():
-                # Only a real JSON boolean counts; strings are never truthy here.
-                if not isinstance(value, bool):
-                    logger.warning("Skipped an invalid saved-screen entry: %r", key)
-                    continue
-                try:
-                    self._saved_screen[int(key)] = value
-                except (TypeError, ValueError):
-                    logger.warning("Skipped an invalid saved-screen entry: %r", key)
-
-        kept = raw.get("keep_sent") if isinstance(raw, dict) else None
-        if isinstance(kept, dict):
-            for key, value in kept.items():
-                if not isinstance(value, bool):
-                    logger.warning("Skipped an invalid keep-sent entry: %r", key)
-                    continue
-                try:
-                    self._keep_sent[int(key)] = value
-                except (TypeError, ValueError):
-                    logger.warning("Skipped an invalid keep-sent entry: %r", key)
+        _read_flags(raw, "saved_screen", self._saved_screen)
+        _read_flags(raw, "keep_sent", self._keep_sent)
+        _read_flags(raw, "single_view", self._single_view)
 
     def _write(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +96,10 @@ class UserPreferences:
                 "keep_sent": {
                     str(user_id): keep
                     for user_id, keep in self._keep_sent.items()
+                },
+                "single_view": {
+                    str(user_id): single
+                    for user_id, single in self._single_view.items()
                 },
             },
             indent=2,
@@ -139,6 +143,18 @@ class UserPreferences:
         self._keep_sent[int(user_id)] = bool(keep)
         self._write()
         return bool(keep)
+
+    def single_file_view(self, user_id: int | None) -> bool:
+        """Whether a new file replaces the previous one (default off)."""
+        if user_id is None:
+            return False
+        return self._single_view.get(int(user_id), False)
+
+    async def set_single_file_view(self, user_id: int, enabled: bool) -> bool:
+        """Remember the user's choice about showing one file at a time."""
+        self._single_view[int(user_id)] = bool(enabled)
+        self._write()
+        return bool(enabled)
 
     @property
     def total(self) -> int:
