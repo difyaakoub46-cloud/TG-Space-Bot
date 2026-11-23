@@ -222,8 +222,14 @@ class State:
         self.data.update(values)
 
 
-async def navigate(monkeypatch, module, target_data, stored_screen) -> dict[str, object]:
-    """Drive a router with a packed callback, capturing the screen it asks for."""
+async def navigate(
+    monkeypatch, module, target_data, stored_screen, services=None
+) -> dict[str, object]:
+    """Drive a router with a packed callback, capturing the screen it asks for.
+
+    ``services`` is handed to the router as it is: a tap that resolves a period
+    anchor (a filter press) needs the real service behind the fake repository.
+    """
     captured: dict[str, object] = {}
 
     async def fake_navigate(callback, state, bot, services, target, **kwargs):
@@ -235,7 +241,7 @@ async def navigate(monkeypatch, module, target_data, stored_screen) -> dict[str,
     monkeypatch.setattr(module.navigation, "navigate_callback", fake_navigate)
     await module.file_list_callback(
         Callback(target_data),
-        services=None,
+        services=services,
         state=State(stored_screen),
         bot=None,
     )
