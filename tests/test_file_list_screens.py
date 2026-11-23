@@ -335,7 +335,12 @@ async def test_a_first_tap_on_another_filter_just_applies_it(monkeypatch) -> Non
     ).pack()
 
     captured = await navigate(
-        monkeypatch, file_list_router, target, screen("category", f="day")
+        monkeypatch,
+        file_list_router,
+        target,
+        screen("category", f="day"),
+        # The filter press asks the service for the newest period with a file.
+        services=SimpleNamespace(files=service(documents(1))),
     )
 
     assert captured["screen"]["f"] == "week"
