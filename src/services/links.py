@@ -8,7 +8,9 @@ URL, and «Helper | Bot» for a bot account. Two sources answer that name:
   because ``getChat`` reads a username only for a public channel or supergroup: a
   bot — or a person — is a private chat, and the Bot API answers «chat not found»
   for it. The page names the account and says «N monthly users» for a bot,
-  «N subscribers» for a channel and «N members» for a group.
+  «N subscribers» for a channel and «N members» for a group. The page is served
+  in the visitor's language, so the line is not the only clue: a bot's page also
+  offers a «Start Bot» button, which no channel or person has.
 
 Reading a name is best effort, never a condition for saving a link: an unreachable
 name leaves the link with the username (or the domain) as its label, exactly like a
@@ -29,7 +31,7 @@ import httpx
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
-from src.utils.links import TELEGRAM, TELEGRAM_HOSTS, classify
+from src.utils.links import TELEGRAM, TELEGRAM_HOSTS, classify, is_username
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +47,32 @@ _PREVIEW_URL = "https://t.me/{name}"
 # Telegram's page answers a plain client; the header only says who is asking.
 _USER_AGENT = "TG-Space-Bot/1.0 (+https://t.me)"
 
-# The two pieces of the preview page that matter: the name and the line under it.
+# The pieces of the preview page that matter: the name, the lines under it and
+# the button at the bottom. A bot's page carries two lines, its username and then
+# its users, so every one of them is read and not just the first.
 _OG_TITLE_RE = re.compile(r'<meta property="og:title" content="([^"]*)"', re.IGNORECASE)
-_EXTRA_RE = re.compile(r'class="tgme_page_extra"[^>]*>([^<]*)<', re.IGNORECASE)
+_EXTRA_RE = re.compile(
+    r'class="tgme_page_extra"[^>]*>(.*?)</div>', re.IGNORECASE | re.DOTALL
+)
+_ACTION_RE = re.compile(
+    r'class="tgme_action_button[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
+)
+_TAG_RE = re.compile(r"<[^>]+>")
 
-# What a public username can look like: 5 to 32 characters, a letter first.
-_HANDLE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{4,31}")
+# A bot's users line, in the languages the page is commonly served in.
+_BOT_EXTRA_MARKERS = (
+    "monthly users",
+    "пользовател",
+    "مستخدم",
+    "utilisateur",
+    "benutzer",
+    "usuarios",
+)
+
+# The word «bot» as the button spells it: «Start Bot», «Запустить бота», «بدء
+# البوت». A channel's button says «View in Telegram» and a person's «Send
+# Message», so the word is enough, and it survives any other translation.
+_BOT_BUTTON_WORDS = ("bot", "бот", "بوت")
 
 
 def _clean(name: object) -> str:
@@ -86,17 +108,28 @@ class Preview:
     is_bot: bool = False
 
 
+def _is_bot_page(page: str) -> bool:
+    """Whether a preview page describes a bot, whatever language it came in."""
+    extra = " ".join(
+        _TAG_RE.sub(" ", match.group(1)) for match in _EXTRA_RE.finditer(page)
+    ).casefold()
+    if any(marker in extra for marker in _BOT_EXTRA_MARKERS):
+        return True
+    button = " ".join(
+        _TAG_RE.sub(" ", match.group(1)) for match in _ACTION_RE.finditer(page)
+    ).casefold()
+    return any(word in button for word in _BOT_BUTTON_WORDS)
+
+
 def parse_preview(page: str) -> Preview | None:
     """The name (and the bot flag) of a preview page, or None without a name."""
     title = _OG_TITLE_RE.search(page or "")
     name = _clean(html.unescape(title.group(1))) if title else ""
     if not name:
         return None
-    extra = _EXTRA_RE.search(page)
-    marker = (extra.group(1) if extra else "").casefold()
     # «N monthly users» is a bot; a channel says «subscribers» and a group
     # «members», and a person's page carries none of the three.
-    return Preview(name=name, is_bot="monthly users" in marker)
+    return Preview(name=name, is_bot=_is_bot_page(page))
 
 
 def telegram_handle(url: str) -> str | None:
@@ -122,7 +155,7 @@ def telegram_handle(url: str) -> str | None:
         name = segments[1] if segments[0].casefold() == "s" and len(segments) > 1 else segments[0]
         if name.startswith("+") or name.casefold() in {"joinchat", "s", "c"}:
             return None
-    return name if _HANDLE_RE.fullmatch(name) else None
+    return name if is_username(name) else None
 
 
 def domain_name(url: str) -> str | None:

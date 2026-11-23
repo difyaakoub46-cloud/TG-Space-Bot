@@ -49,7 +49,16 @@ def test_an_address_is_never_read_as_a_username() -> None:
 
 
 def test_a_username_that_is_too_short_is_not_a_link() -> None:
-    assert extract_links("@abc") == []
+    assert extract_links("@ab") == []
+
+
+def test_a_short_bot_username_is_a_link() -> None:
+    # Bots made before the five-letter rule keep their short names.
+    links = extract_links("@gif")
+
+    assert [(link.url, link.link_type, link.handle) for link in links] == [
+        ("https://t.me/gif", TELEGRAM, "gif")
+    ]
 
 
 def test_a_username_and_a_link_in_one_message_keep_the_link_only() -> None:
@@ -64,6 +73,9 @@ def test_the_username_inside_a_telegram_address_is_read() -> None:
     assert telegram_handle("https://t.me/space_channel/42") == "space_channel"
     assert telegram_handle("https://t.me/s/space_channel") == "space_channel"
     assert telegram_handle("tg://resolve?domain=space_channel") == "space_channel"
+    # A short bot name is a username too, both in an address and bare.
+    assert telegram_handle("https://t.me/gif") == "gif"
+    assert telegram_handle("https://t.me/Gif") == "Gif"
 
 
 def test_an_invite_link_names_no_username() -> None:
@@ -80,19 +92,50 @@ def test_a_global_link_is_named_by_its_domain() -> None:
 # --------------------------------------------------------------------------- #
 # The preview page
 # --------------------------------------------------------------------------- #
+# The page of a bot carries two «tgme_page_extra» lines: the username, then the
+# count of its users. Reading only the first one made every bot look like a person.
 _BOT_PAGE = """
 <meta property="og:title" content="BotFather">
+<div class="tgme_page_extra">
+  @BotFather
+</div>
 <div class="tgme_page_extra">8 163 753 monthly users</div>
+<div class="tgme_page_action">
+  <a class="tgme_action_button_new shine" href="tg://resolve?domain=BotFather">Start Bot</a>
+</div>
+"""
+
+# The same page served in another language, with no button to fall back on.
+_RUSSIAN_BOT_PAGE = """
+<meta property="og:title" content="Помощник">
+<div class="tgme_page_extra">@pomoshchnik_bot</div>
+<div class="tgme_page_extra">12 400 пользователей в месяц</div>
 """
 
 _CHANNEL_PAGE = """
 <meta property="og:title" content="Telegram News">
+<div class="tgme_page_extra">@telegram</div>
 <div class="tgme_page_extra">9 071 863 subscribers</div>
+<a class="tgme_action_button_new shine" href="tg://resolve?domain=telegram">View in Telegram</a>
+"""
+
+_RUSSIAN_CHANNEL_PAGE = """
+<meta property="og:title" content="Новости">
+<div class="tgme_page_extra">9 071 863 подписчиков</div>
+<a class="tgme_action_button_new shine" href="tg://resolve?domain=news">Открыть в Telegram</a>
+"""
+
+# No users line at all: only the button says what the account is.
+_BUTTON_ONLY_BOT_PAGE = """
+<meta property="og:title" content="Helper">
+<div class="tgme_page_extra">@helper_bot</div>
+<a class="tgme_action_button_new shine" href="tg://resolve?domain=helper_bot">Start Bot</a>
 """
 
 _PERSON_PAGE = """
 <meta property="og:title" content="Pavel Durov">
 <div class="tgme_page_extra"></div>
+<a class="tgme_action_button_new shine" href="tg://resolve?domain=durov">Send Message</a>
 """
 
 
@@ -102,10 +145,26 @@ def test_a_bot_page_names_a_bot() -> None:
     assert (preview.name, preview.is_bot) == ("BotFather", True)
 
 
-def test_a_channel_page_is_not_a_bot() -> None:
-    preview = parse_preview(_CHANNEL_PAGE)
+def test_a_bot_page_in_another_language_is_still_a_bot() -> None:
+    preview = parse_preview(_RUSSIAN_BOT_PAGE)
     assert preview is not None
-    assert (preview.name, preview.is_bot) == ("Telegram News", False)
+    assert (preview.name, preview.is_bot) == ("Помощник", True)
+
+
+def test_the_start_button_alone_names_a_bot() -> None:
+    preview = parse_preview(_BUTTON_ONLY_BOT_PAGE)
+    assert preview is not None
+    assert (preview.name, preview.is_bot) == ("Helper", True)
+
+
+def test_a_channel_page_is_not_a_bot() -> None:
+    for page, name in (
+        (_CHANNEL_PAGE, "Telegram News"),
+        (_RUSSIAN_CHANNEL_PAGE, "Новости"),
+    ):
+        preview = parse_preview(page)
+        assert preview is not None
+        assert (preview.name, preview.is_bot) == (name, False)
 
 
 def test_a_page_without_users_line_is_not_a_bot() -> None:
@@ -174,6 +233,18 @@ async def test_a_bot_is_read_from_its_public_page() -> None:
 
     assert (info.name, info.is_bot, info.source) == ("BotFather", True, "preview")
     assert info.confirmed is True
+
+
+async def test_a_short_username_is_read_from_its_page() -> None:
+    resolver = _Resolver(
+        pages={"gif": parse_preview(_BOT_PAGE)},
+        bot=_Bot(error=_chat_not_found()),
+    )
+
+    info = await resolver.resolve("https://t.me/gif")
+
+    assert (info.name, info.is_bot, info.confirmed) == ("BotFather", True, True)
+    assert resolver.fetched == ["gif"]
 
 
 async def test_an_unreadable_username_falls_back_to_the_username_itself() -> None:

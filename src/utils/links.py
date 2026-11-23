@@ -48,9 +48,19 @@ _LINK_RE = re.compile(
 # Sentence punctuation that ends up glued to a pasted link, Latin and Arabic.
 _TRAILING = " \t\r\n.,;:!?…'\"”’»«>)]}،؛؟"
 
-# A username alone in the message. Telegram allows 5 to 32 characters, the first
-# one a letter, and a letter is required after the «@» (so «@123» is not one).
-_HANDLE_RE = re.compile(r"^\s*@([A-Za-z][A-Za-z0-9_]{4,31})\s*$")
+# A public username: 3 to 32 characters, the first one a letter. Telegram's
+# documented minimum is 5, but bots made before that rule keep shorter names
+# (``@gif``, ``@vid``, ``@wiki``), so a shorter one is still a username.
+USERNAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,31}")
+
+# A username alone in the message; a letter is required after the «@» (so
+# «@123» is not one).
+_HANDLE_RE = re.compile(r"^\s*@([A-Za-z][A-Za-z0-9_]{2,31})\s*$")
+
+
+def is_username(name: str | None) -> bool:
+    """Whether ``name`` (without the «@») can be a Telegram username."""
+    return bool(USERNAME_RE.fullmatch(name or ""))
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,4 +169,5 @@ __all__ = [
     "TELEGRAM_HOSTS",
     "classify",
     "extract_links",
+    "is_username",
 ]

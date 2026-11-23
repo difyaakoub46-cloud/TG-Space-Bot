@@ -390,6 +390,47 @@ async def test_a_confirmed_bot_keeps_its_name_and_its_badge(tmp_path) -> None:
     assert report.saved[0].link_display_name == "Helper | Bot"
 
 
+async def test_the_bot_father_handle_is_saved_with_its_name_and_badge(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(
+        _Resolver(
+            **{
+                "https://t.me/botfather": LinkInfo(
+                    name="BotFather", is_bot=True, source="preview"
+                )
+            }
+        )
+    )
+
+    report = await services.save_links(make_message(), extract_links("@BotFather"))
+
+    assert len(report.saved) == 1
+    row = repository.rows[0]
+    assert (row["link_url"], row["link_name"], row["link_is_bot"]) == (
+        "https://t.me/botfather",
+        "BotFather",
+        True,
+    )
+    assert report.saved[0].link_display_name == "BotFather | Bot"
+
+
+async def test_a_short_bot_handle_is_saved_too(tmp_path) -> None:
+    bot, repository = FakeBot(), FakeRepository()
+    services = _link_service(tmp_path, bot, repository)
+    services.bind_links(
+        _Resolver(
+            **{"https://t.me/gif": LinkInfo(name="GIF", is_bot=True, source="preview")}
+        )
+    )
+
+    report = await services.save_links(make_message(), extract_links("@gif"))
+
+    assert len(report.saved) == 1
+    assert repository.rows[0]["link_url"] == "https://t.me/gif"
+    assert repository.rows[0]["link_is_bot"] is True
+
+
 async def test_a_handle_that_is_not_a_bot_is_refused_before_the_copy(tmp_path) -> None:
     bot, repository = FakeBot(), FakeRepository()
     services = _link_service(tmp_path, bot, repository)
