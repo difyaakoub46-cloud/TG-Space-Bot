@@ -113,6 +113,42 @@ def history_date(value: object = None, zone: tzinfo | None = None) -> date:
         return datetime.now(zone or local_zone()).date()
 
 
+def _period_anchor(day: date, span: str, zone: tzinfo | None = None) -> date:
+    """The anchor both the list and the picker use for a period.
+
+    A week is anchored on its Monday, a month on its first day and a year on its
+    first of January, so the picker's ✅ and the list's windows describe the same
+    period. The anchor is the *local* date, the one the user reads.
+    """
+    zone = zone or local_zone()
+    start, _end = history_window(span, day, zone)
+    return start.astimezone(zone).date() if start is not None else day
+
+
+def _list_filter(
+    view: str, value: str
+) -> tuple[str, str, str | None, FileCategory | None, str]:
+    """The view's own ``WHERE`` clause, shared by every query of the list.
+
+    ``search`` narrows by a name fragment, ``category`` by the file's category
+    and ``links`` by one of its two sections; the page, the period jump, the
+    picker and the anchor all go through here, so they can never disagree about
+    which rows a list holds.
+    """
+    view = str(view or "search")
+    view = view if view in LIST_VIEWS else "search"
+    value = " ".join(str(value or "").split())
+    link_type = "none"
+    query = value if view == "search" and value else None
+    category = parse_category(value) if view == "category" and value else None
+    if view == "links":
+        # An unknown value (an older screen) opens the default section instead of
+        # every link at once.
+        value = value if value in LINK_TYPES else TELEGRAM
+        link_type = value
+    return view, value, query, category, link_type
+
+
 def _period_key(day: date, span: str) -> tuple[int, ...]:
     """The bucket one file belongs to, for a period filter."""
     if span == "week":
@@ -179,6 +215,7 @@ class FileListPage:
     start: datetime | None = None
     end: datetime | None = None
     next_anchor: date | None = None
+    prev_anchor: date | None = None
 
     @property
     def older_page(self) -> int | None:
@@ -757,25 +794,13 @@ class FileStorageServices:
         the quick jump («Next Day/Week/Month/Year ⏭️»), so the jump works from any
         page of the period and never walks the empty ones.
         """
-        view = str(view or "search")
-        view = view if view in LIST_VIEWS else "search"
-        value = " ".join(str(value or "").split())
         span = span if str(span or "") in HISTORY_SPANS else "all"
         sort = normalise_sort(sort)
         anchor = history_date(anchor)
         start, end = history_window(span, anchor)
         per_page = max(1, per_page)
         page = max(1, page)
-
-        # The view's own WHERE clause, shared by the page and the period jump.
-        link_type = "none"
-        query = value if view == "search" and value else None
-        category = parse_category(value) if view == "category" and value else None
-        if view == "links":
-            # The links section is the view's filter; an unknown value (an older
-            # screen) opens the default section instead of every link at once.
-            value = value if value in LINK_TYPES else TELEGRAM
-            link_type = value
+        view, value, query, category, link_type = _list_filter(view, value)
         order = database_order(sort_from_key(sort))
 
         async def fetch(target: int) -> tuple[list[StoredFile], int]:
@@ -802,17 +827,21 @@ class FileStorageServices:
                 found, count = await fetch(page)
             return found, count
 
-        # The quick jump is offered on every page of a period, not only on its
-        # last one, and it does not depend on the page itself: both queries run
+        # The quick jumps are offered on every page of a period, not only on its
+        # last one, and neither depends on the page itself: the three queries run
         # together instead of one after the other.
-        if start is None:
+        next_anchor: date | None = None
+        prev_anchor: date | None = None
+        if start is None or end is None:
             files, total = await fetch_page()
-            next_anchor: date | None = None
         else:
-            (files, total), next_anchor = await asyncio.gather(
+            (files, total), next_anchor, prev_anchor = await asyncio.gather(
                 fetch_page(),
                 self._nearest_older_day(
                     start, query=query, category=category, link_type=link_type
+                ),
+                self._nearest_newer_day(
+                    end, query=query, category=category, link_type=link_type
                 ),
             )
         pages = max(1, -(-total // per_page))
@@ -830,7 +859,61 @@ class FileStorageServices:
             start=start,
             end=end,
             next_anchor=next_anchor,
+            prev_anchor=prev_anchor,
         )
+
+    async def latest_anchor(
+        self, span: str, view: str = "search", value: str = ""
+    ) -> date | None:
+        """The anchor of the newest period holding a file of this view.
+
+        A filter must open on a period with something in it, not on today's empty
+        window: one row is enough to find the newest matching upload, and the
+        anchor is shaped like the picker's (a Monday, a first of the month…), so
+        the list and the picker agree. ``None`` means the view holds no file at
+        all, and the caller keeps the anchor it has.
+        """
+        span = history_span(span)
+        if span == "all":
+            return None
+        _view, _value, query, category, link_type = _list_filter(view, value)
+        files, _total = await self._repository.search(
+            query=query,
+            category=category,
+            link_type=link_type,
+            limit=1,
+            order="created_at.desc",
+        )
+        if not files:
+            return None
+        day = files[0].created_at.astimezone(local_zone()).date()
+        return _period_anchor(day, span)
+
+    async def _nearest_newer_day(
+        self,
+        moment: datetime,
+        *,
+        query: str | None = None,
+        category: FileCategory | None = None,
+        link_type: str = "none",
+    ) -> date | None:
+        """The day of the oldest file stored at or after ``moment``.
+
+        The mirror of :meth:`_nearest_older_day`, for «⏮️ Previous Day/Week/
+        Month/Year»: one row of the view's filter, read forwards, names the
+        closest newer period that holds a match, so a jump never walks the empty
+        ones. The view's own filter is kept, so it never lands on a period
+        without a match.
+        """
+        files, _total = await self._repository.search(
+            query=query,
+            category=category,
+            link_type=link_type,
+            created_after=moment,
+            limit=1,
+            order="created_at.asc",
+        )
+        return files[0].created_at.astimezone(local_zone()).date() if files else None
 
     async def _nearest_older_day(
         self,
@@ -875,9 +958,7 @@ class FileStorageServices:
         in the local zone, the same one the list windows are built from, so both
         agree about which day a file belongs to.
         """
-        view = str(view or "search")
-        view = view if view in LIST_VIEWS else "search"
-        value = " ".join(str(value or "").split())
+        view, value, query, category, link_type = _list_filter(view, value)
         span = history_span(span)
         if span == "all":
             return []
@@ -887,15 +968,8 @@ class FileStorageServices:
             # the periods are folded here with the section's own filter instead of
             # offering dates that only hold files of the other section.
             return await self._folded_period_counts(
-                None,
-                None,
-                span,
-                limit,
-                link_type=value if value in LINK_TYPES else TELEGRAM,
+                None, None, span, limit, link_type=link_type
             )
-
-        query = value if view == "search" and value else None
-        category = parse_category(value) if view == "category" and value else None
 
         try:
             return await self._repository.period_counts(
@@ -912,7 +986,9 @@ class FileStorageServices:
                 "files_periods is unavailable; folding the dates in the bot",
                 exc_info=True,
             )
-        return await self._folded_period_counts(query, category, span, limit)
+        return await self._folded_period_counts(
+            query, category, span, limit, link_type=link_type
+        )
 
     async def _folded_period_counts(
         self,
@@ -937,8 +1013,7 @@ class FileStorageServices:
                 break
             for moment in dates:
                 day = moment.astimezone(local_zone()).date()
-                start, _end = history_window(span, day)
-                anchor = start.astimezone(local_zone()).date() if start else day
+                anchor = _period_anchor(day, span)
                 bucket = seen.setdefault(_period_key(day, span), [anchor, 0])
                 bucket[1] += 1
             offset += _DATES_BATCH
