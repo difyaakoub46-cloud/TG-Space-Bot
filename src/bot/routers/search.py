@@ -25,18 +25,25 @@ router = Router(name="search")
 _MAX_QUERY = 80
 
 
-def _text_screen(message: Message, state_data: dict[str, object], query: str) -> dict[str, object]:
-    """The search list for a typed query, keeping the period and ordering shown."""
+async def _text_screen(
+    message: Message, state_data: dict[str, object], query: str, services: Services
+) -> dict[str, object]:
+    """The search list for a typed query, keeping the period and ordering shown.
+
+    A new query is also a new set of matching files, so a period filter is
+    anchored again on the newest period the query has a match in: typing under
+    «📅 Day» used to keep today's anchor and show an empty list.
+    """
     stored = FileListContext.from_screen(state_data.get("screen_key"))
-    screen = file_list.new_screen(
+    keeps = stored.view == "search"
+    return await file_list.opened_screen(
+        services,
         "search",
         query,
         int(message.from_user.id) if message.from_user else 0,
+        span=stored.period if keeps else "all",
+        sort=stored.sort if keeps else None,
     )
-    if stored.view == "search":
-        screen["f"] = stored.period
-        screen["srt"] = stored.sort
-    return screen
 
 
 @router.message(Command("search"))
@@ -89,5 +96,5 @@ async def search_query_message(
         state,
         bot,
         services,
-        _text_screen(message, await state.get_data(), query),
+        await _text_screen(message, await state.get_data(), query, services),
     )

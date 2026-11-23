@@ -113,6 +113,18 @@ async def file_list_callback(
         # The two sections are the same list under another filter: the period and
         # the ordering stay, the page starts again.
         ctx = replace(ctx, value=data.value, page=1)
+    elif data.action == "filter":
+        # A period filter opens on the newest period that holds a file of this
+        # view, instead of keeping the anchor of the period it was tapped from
+        # (which is today's empty window whenever nothing was uploaded today).
+        # The same filter tapped twice never reaches here: it opens the picker.
+        ctx = replace(ctx, page=1)
+        if ctx.period != "all":
+            anchor = await services.files.latest_anchor(
+                ctx.period, ctx.view, ctx.value
+            )
+            if anchor is not None:
+                ctx = replace(ctx, anchor=anchor)
     elif data.action == "sorted":
         # A new ordering renumbers every page, so the list starts again from one.
         ctx = replace(ctx, page=1)

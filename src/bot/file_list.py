@@ -144,6 +144,37 @@ def new_screen(
     ).to_screen({"u": int(user_id or 0)})
 
 
+async def opened_screen(
+    services,
+    view: str,
+    value: str = "",
+    user_id: int = 0,
+    *,
+    span: str = "all",
+    sort: str | None = None,
+) -> dict[str, object]:
+    """The first page of a list, anchored on a period that holds files.
+
+    «All time» lists everything and needs no anchor, but a day, a week, a month
+    and a year must open on the newest period with a matching file: anchoring on
+    today showed an empty window whenever nothing was uploaded today, and the
+    same problem came back for every typed search. One row is enough to find it,
+    so the anchor is resolved when the list is opened — never on a redraw.
+    """
+    ctx = FileListContext(
+        view=view if view in VIEWS else "search",
+        value=" ".join(str(value or "").split()),
+        period=span,
+        sort=sort or "newest",
+        anchor=history_date(),
+    )
+    if ctx.period != "all":
+        anchor = await services.files.latest_anchor(ctx.period, ctx.view, ctx.value)
+        if anchor is not None:
+            ctx = replace(ctx, anchor=anchor)
+    return ctx.to_screen({"u": int(user_id or 0)})
+
+
 def callback_data(
     ctx: FileListContext,
     action: str = "open",
@@ -361,6 +392,16 @@ def _jump_label(span: str) -> str:
     }.get(span, pick("Next ⏭️", "التالي ⏭️"))
 
 
+def _back_jump_label(span: str) -> str:
+    """«⏮️ Previous Day» and friends, the other direction of the quick jump."""
+    return {
+        "day": pick("⏮️ Previous Day", "⏮️ اليوم السابق"),
+        "week": pick("⏮️ Previous Week", "⏮️ الأسبوع السابق"),
+        "month": pick("⏮️ Previous Month", "⏮️ الشهر السابق"),
+        "year": pick("⏮️ Previous Year", "⏮️ السنة السابقة"),
+    }.get(span, pick("⏮️ Previous", "⏮️ السابق"))
+
+
 def _filter_buttons(
     ctx: FileListContext, page: FileListPage
 ) -> list[InlineKeyboardButton]:
@@ -408,6 +449,13 @@ def _controls(
             InlineKeyboardButton(
                 text=pick("Next ▶️", "التالي ▶️"),
                 callback_data=callback_data(ctx, page=page.older_page),
+            )
+        )
+    if page.span != "all" and page.prev_anchor is not None:
+        buttons.append(
+            InlineKeyboardButton(
+                text=_back_jump_label(page.span),
+                callback_data=callback_data(ctx, page=1, anchor=page.prev_anchor),
             )
         )
     if page.span != "all" and page.next_anchor is not None:
@@ -672,6 +720,7 @@ __all__ = [
     "file_list_kb",
     "file_list_text",
     "new_screen",
+    "opened_screen",
     "period_picker_kb",
     "period_picker_text",
     "screen",
