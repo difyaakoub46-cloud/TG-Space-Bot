@@ -300,7 +300,11 @@ async def test_typing_a_query_keeps_the_period_and_the_ordering(monkeypatch) -> 
     )
     await search_router.search_query_message(
         message,
-        services=None,
+        # The query is anchored on a period that holds a match, which the
+        # service resolves through the same fake repository the list uses.
+        services=SimpleNamespace(
+            files=service([record(1, moment(WEEK_DAY)), record(2, moment(TODAY))])
+        ),
         state=State(screen("search", "old", f="week", srt="size_desc")),
         bot=None,
     )
